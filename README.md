@@ -13,7 +13,8 @@ iOS 壳子（加载 → 卡密 → 控制台），身份皮对齐 Apple Music。
 - `windowLevel = statusBar + 2000`（SHMainWnd 同款）
 - `FangUISBSHosting`：`objc_getClass("SBSAccessibilityWindowHostingController")` + `registerWindowWithContextID:atLevel:`（`_contextId`）
 - 进后台不释放，心跳 reassert + **重新 register**
-- 半透明可拖小面板，空白区 hitTest 穿透
+- 全屏 RootViewController **原版长方形卡片**（Overview 横排 + 底栏），不再竖条挤压
+- `window.transform = .identity`，修 iPad 上内容旋转 90°
 - entitlements 不改（已有 accessibility-window-hosting）
 
 ## 本地生成工程

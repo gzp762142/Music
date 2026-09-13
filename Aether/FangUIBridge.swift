@@ -56,7 +56,8 @@ enum FangUIBridge {
         w.windowLevel = levelSystem
         w.backgroundColor = .clear
         w.isOpaque = false
-        w.rootViewController = FangUIPanelHost(onRequestPowerOff: { onPowerOff?(false) })
+        w.transform = .identity
+        w.rootViewController = FangUIContentHost(onRequestPowerOff: { onPowerOff?(false) })
 
         if #available(iOS 13.0, *) {
             if let scene = preferredWindowScene() {
@@ -64,6 +65,8 @@ enum FangUIBridge {
                 w.frame = scene.coordinateSpace.bounds
             }
         }
+        // Keep landscape-capable card upright on iPad.
+        w.transform = .identity
 
         w.isHidden = false
         w.alpha = 1
@@ -166,14 +169,13 @@ enum FangUIBridge {
     }
 }
 
-// MARK: - Compact draggable panel host
-private final class FangUIPanelHost: UIViewController {
+// MARK: - Full-rect content host (original FangUI card layout)
+/// Uses RootViewController as-is: wide rectangular card, bottom nav, Metal FX.
+/// Close is a floating chip — does not shrink / rotate the menu.
+private final class FangUIContentHost: UIViewController {
     private let content = RootViewController()
-    private let panel = UIView()
     private let closeBtn = UIButton(type: .system)
     private let onRequestPowerOff: () -> Void
-    private var panelCenter: CGPoint = .zero
-    private let panelSize = CGSize(width: 340, height: 520)
 
     init(onRequestPowerOff: @escaping () -> Void) {
         self.onRequestPowerOff = onRequestPowerOff
@@ -187,65 +189,43 @@ private final class FangUIPanelHost: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .clear
-
-        panel.backgroundColor = UIColor.black.withAlphaComponent(0.55)
-        panel.layer.cornerRadius = 20
-        panel.layer.borderWidth = 1
-        panel.layer.borderColor = UIColor.white.withAlphaComponent(0.12).cgColor
-        panel.clipsToBounds = true
-        view.addSubview(panel)
+        view.transform = .identity
 
         addChild(content)
-        content.view.frame = CGRect(origin: .zero, size: panelSize)
-        panel.addSubview(content.view)
+        content.view.frame = view.bounds
+        content.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        content.view.transform = .identity
+        view.addSubview(content.view)
         content.didMove(toParent: self)
 
         closeBtn.setTitle("关闭", for: .normal)
-        closeBtn.titleLabel?.font = .systemFont(ofSize: 13, weight: .semibold)
-        closeBtn.backgroundColor = UIColor.black.withAlphaComponent(0.4)
+        closeBtn.titleLabel?.font = .systemFont(ofSize: 14, weight: .semibold)
+        closeBtn.backgroundColor = UIColor.black.withAlphaComponent(0.45)
         closeBtn.setTitleColor(.white, for: .normal)
-        closeBtn.layer.cornerRadius = 14
-        closeBtn.contentEdgeInsets = UIEdgeInsets(top: 5, left: 12, bottom: 5, right: 12)
+        closeBtn.layer.cornerRadius = 16
+        closeBtn.contentEdgeInsets = UIEdgeInsets(top: 6, left: 14, bottom: 6, right: 14)
         closeBtn.addTarget(self, action: #selector(onClose), for: .touchUpInside)
-        panel.addSubview(closeBtn)
-
-        panel.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(onPan(_:))))
+        view.addSubview(closeBtn)
     }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        if panelCenter == .zero {
-            panelCenter = CGPoint(x: view.bounds.midX, y: view.bounds.midY)
-        }
-        layoutPanel()
-    }
-
-    private func layoutPanel() {
-        panel.bounds = CGRect(origin: .zero, size: panelSize)
-        panel.center = panelCenter
-        content.view.frame = panel.bounds
+        content.view.frame = view.bounds
         closeBtn.sizeToFit()
+        let top = view.safeAreaInsets.top + 8
         closeBtn.frame = CGRect(
-            x: panelSize.width - closeBtn.bounds.width - 10,
-            y: 10,
+            x: view.bounds.width - closeBtn.bounds.width - 16,
+            y: top,
             width: closeBtn.bounds.width,
-            height: max(28, closeBtn.bounds.height)
+            height: max(32, closeBtn.bounds.height)
         )
     }
 
-    @objc private func onPan(_ g: UIPanGestureRecognizer) {
-        let t = g.translation(in: view)
-        panelCenter = CGPoint(x: panelCenter.x + t.x, y: panelCenter.y + t.y)
-        g.setTranslation(.zero, in: view)
-        let half = CGSize(width: panelSize.width / 2, height: panelSize.height / 2)
-        panelCenter.x = min(max(panelCenter.x, half.width), view.bounds.width - half.width)
-        panelCenter.y = min(max(panelCenter.y, half.height), view.bounds.height - half.height)
-        layoutPanel()
-    }
+    override var supportedInterfaceOrientations: UIInterfaceOrientationMask { .all }
+
+    override var prefersHomeIndicatorAutoHidden: Bool { true }
 
     @objc private func onClose() {
         onRequestPowerOff()
     }
-
-    override var prefersHomeIndicatorAutoHidden: Bool { true }
 }

@@ -492,11 +492,12 @@ final class RootViewController: UIViewController {
         view.setNeedsLayout()
     }
 
-    /// 双指长按：翻转 SpringBoard 托管（重启生效）。
+    /// 双指长按整卡：循环本地窗口层级档位（运行期生效），用来找到
+    /// 「只剩一份面板」的那一档。
     @objc private func onToggleHosting(_ g: UILongPressGestureRecognizer) {
         guard g.state == .began else { return }
-        let on = FangUIBridge.toggleHosting()
-        badgeLabel.text = on ? "  ● sbs on·重启  " : "  ● sbs off·重启  "
+        let name = FangUIBridge.cycleLocalLevel()
+        badgeLabel.text = "  ● lv \(name)  "
         view.setNeedsLayout()
     }
 

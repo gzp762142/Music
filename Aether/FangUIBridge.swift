@@ -65,14 +65,49 @@ enum FangUIBridge {
     /// TrollEngine SHMainWnd: UIWindowLevelStatusBar + 2000
     private static let levelSystem = UIWindow.Level(rawValue: UIWindow.Level.statusBar.rawValue + 2000)
 
-    /// **本地**窗口层级：压到 App 主窗口之下。
+    /// 本地窗口层级档位（可在设备上循环切换，运行期即可生效）。
     ///
-    /// 关键发现（实测）：窗口交给 SpringBoard 托管后，它会自己再合成一份，
-    /// 于是「App 内看到两份、退出 App 只剩一份」。
-    /// 两份的朝向也不同——我们给窗口加的补偿只让**托管那份**变正，
-    /// 本地那份反而被转掉。既然托管那份既正确又能跨 App 显示，
-    /// 就让本地的这份藏到 App 不透明底之下，屏幕上只留托管那一份。
-    private static let levelLocal = UIWindow.Level(rawValue: -1)
+    /// 背景：窗口交给 SpringBoard 托管后系统会**再合成一份**，于是
+    /// 「App 内两份 / 退出后一份」。两份来自同一份 layer，我们施加的任何变换
+    /// 对两份的影响相同，而 SpringBoard 还会叠加屏幕旋转 —— 所以两份的朝向
+    /// 必然相差 90°，**只改变换永远只能对一份**。要单份，只能让本地那份不参与合成，
+    /// 而「本地层放到哪一档才不被自己场景合成」这件事只能在真机上试出来，
+    /// 因此给出这几档而不是写死一个猜测值。
+    private static let localLevels: [(name: String, level: UIWindow.Level)] = [
+        ("sys",  UIWindow.Level(rawValue: UIWindow.Level.statusBar.rawValue + 2000)),
+        ("sb1",  UIWindow.Level(rawValue: UIWindow.Level.statusBar.rawValue + 1)),
+        ("0",    .normal),
+        ("-1",   UIWindow.Level(rawValue: -1)),
+        ("-100", UIWindow.Level(rawValue: -100))
+    ]
+
+    private static let levelKey = "FangUI.LocalWindowLevelIndex"
+
+    static var localLevelIndex: Int {
+        get {
+            let v = UserDefaults.standard.integer(forKey: levelKey)
+            return (v >= 0 && v < localLevels.count) ? v : 0
+        }
+        set {
+            let clamped = min(max(newValue, 0), localLevels.count - 1)
+            UserDefaults.standard.set(clamped, forKey: levelKey)
+        }
+    }
+
+    static var localLevel: UIWindow.Level { localLevels[localLevelIndex].level }
+
+    static var localLevelName: String { localLevels[localLevelIndex].name }
+
+    /// 循环本地层级档位；立即生效（无需重启）。
+    @discardableResult
+    static func cycleLocalLevel() -> String {
+        localLevelIndex = localLevelIndex + 1
+        if let w = window {
+            w.windowLevel = localLevel
+            applySceneGeometry(w)
+        }
+        return localLevelName
+    }
 
     static var isVisible: Bool {
         guard isOpen, let w = window else { return false }
@@ -117,7 +152,7 @@ enum FangUIBridge {
         }
         applySceneGeometry(w)
         // 只让 SpringBoard 托管那份可见：本地窗口保持低位、不抢 key。
-        w.windowLevel = levelLocal
+        w.windowLevel = localLevel
         w.isHidden = false
         w.alpha = 1
         applySceneGeometry(w)
@@ -126,7 +161,7 @@ enum FangUIBridge {
 
     private static func makeWindow() -> FangUIOverlayWindow {
         let w = FangUIOverlayWindow(frame: .zero)
-        w.windowLevel = levelLocal
+        w.windowLevel = localLevel
         // 窗口只覆盖卡片本身（含阴影边距）：卡片不透明，
         // 卡片之外透出桌面或下层 app —— 这才是外挂悬浮菜单的形态。
         w.backgroundColor = .clear
@@ -212,7 +247,7 @@ enum FangUIBridge {
         guard isOpen else { return }
         applySceneGeometry(w)
         // 本地层级始终压在 App 之下；可见性交给 SpringBoard 那份。
-        w.windowLevel = levelLocal
+        w.windowLevel = localLevel
         w.isHidden = false
         w.alpha = 1
         // 注册已在窗口创建时完成；这里只在丢失后补一次。
@@ -392,8 +427,8 @@ enum FangUIBridge {
             if w.isHidden {
                 reassert(w)
             } else {
-                // 方向可能随设备变化；本地层级保持压在 App 之下。
-                if w.windowLevel != levelLocal { w.windowLevel = levelLocal }
+                // 方向/层级档位可能变化；保持与当前档位一致。
+                if w.windowLevel != localLevel { w.windowLevel = localLevel }
                 applySceneGeometry(w)
             }
         }

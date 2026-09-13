@@ -87,7 +87,7 @@ final class MetalFXView: MTKView {
     }
 
     private func buildPipeline() {
-        guard let device, let library else { return }
+        guard let device = self.device, let library = MetalContext.shared.library else { return }
         let desc = MTLRenderPipelineDescriptor()
         desc.vertexFunction = library.makeFunction(name: "fx_vertex")
         desc.fragmentFunction = library.makeFunction(name: "fx_fragment")

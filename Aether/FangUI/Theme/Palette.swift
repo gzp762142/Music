@@ -1,5 +1,17 @@
 import UIKit
 
+extension UIColor {
+    /// Allows `bg: .hex(0xEAE8E1)` in UIColor-typed slots.
+    static func hex(_ rgb: UInt32, _ a: CGFloat = 1) -> UIColor {
+        UIColor(
+            red: CGFloat((rgb >> 16) & 0xFF) / 255,
+            green: CGFloat((rgb >> 8) & 0xFF) / 255,
+            blue: CGFloat(rgb & 0xFF) / 255,
+            alpha: a
+        )
+    }
+}
+
 /// 明/暗双主题配色，对应原 theme.cpp 的 Palette + Lerp
 struct Palette {
     var bg: UIColor

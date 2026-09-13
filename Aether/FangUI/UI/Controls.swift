@@ -1,6 +1,6 @@
-﻿import UIKit
+import UIKit
 
-/// 瀵瑰簲鍘?ToggleSwitch锛氳嵂涓歌建閬?+ 鍦嗛挳 + 缂撳姩
+/// 对应原 ToggleSwitch：药丸轨道 + 圆钮 + 缓动
 final class ToggleSwitch: UIControl {
     var isOn: Bool {
         didSet { setNeedsLayout(); animateKnob() }
@@ -79,7 +79,7 @@ final class ToggleSwitch: UIControl {
     }
 }
 
-/// 瀵瑰簲 CheckChip锛氬渾瑙掑嬀閫夊潡
+/// 对应 CheckChip：圆角勾选块
 final class CheckChip: UIControl {
     var isOn: Bool { didSet { setNeedsDisplay() } }
     private let titleLabel = UILabel()
@@ -136,7 +136,7 @@ final class CheckChip: UIControl {
     }
 }
 
-/// 瀵瑰簲 FancySlider锛氱粏杞ㄩ亾 + 鐧介挳 + 璺熼殢姘旀场
+/// 对应 FancySlider：细轨道 + 白钮 + 跟随气泡
 final class FancySlider: UIControl {
     var value: Float
     var minValue: Float
@@ -250,7 +250,8 @@ final class FancySlider: UIControl {
     }
 }
 
-/// 涓€琛岋細宸︽爣绛?+ 鍙虫帶浠?final class RowView: UIView {
+/// 一行：左标签 + 右控件
+final class RowView: UIView {
     let label = UILabel()
     let control: UIView
 
@@ -284,7 +285,7 @@ final class FancySlider: UIControl {
     }
 }
 
-/// 娈佃惤鏍囬
+/// 段落标题
 final class SectionLabel: UILabel {
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -293,4 +294,3 @@ final class SectionLabel: UILabel {
 
     required init?(coder: NSCoder) { super.init(coder: coder) }
 }
-

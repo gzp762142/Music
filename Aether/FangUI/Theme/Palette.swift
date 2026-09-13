@@ -1,6 +1,6 @@
-﻿import UIKit
+import UIKit
 
-/// 鏄?鏆楀弻涓婚閰嶈壊锛屽搴斿師 theme.cpp 鐨?Palette + Lerp
+/// 明/暗双主题配色，对应原 theme.cpp 的 Palette + Lerp
 struct Palette {
     var bg: UIColor
     var card: UIColor
@@ -63,7 +63,7 @@ struct Palette {
         shadow: .hex(0x000000, 0.4)
     )
 
-    /// t: 0 娴呰壊 鈫?1 娣辫壊
+    /// t: 0 浅色 → 1 深色
     static func lerp(_ t: CGFloat) -> Palette {
         let a = light, b = dark
         func mix(_ x: UIColor, _ y: UIColor) -> UIColor {
@@ -98,7 +98,7 @@ struct Palette {
     }
 }
 
-/// 鍏ㄥ眬鐣岄潰鐘舵€侊紝瀵瑰簲鍘?UI::FangUIState
+/// 全局界面状态，对应原 UI::FangUIState
 final class FangUIState {
     var dark = false
     var themeT: CGFloat = 0
@@ -140,4 +140,3 @@ enum FangTheme {
     static var state = FangUIState()
     static func palette() -> Palette { .lerp(state.themeT) }
 }
-

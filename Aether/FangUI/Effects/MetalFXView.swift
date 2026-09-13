@@ -1,8 +1,8 @@
-﻿import Metal
+import Metal
 import MetalKit
 import UIKit
 
-/// Metal 涓婁笅鏂囷細瀵瑰簲 Music 鏍锋湰閲岀殑 MetalContext / MetalBuffer
+/// Metal 上下文：对应 Music 样本里的 MetalContext / MetalBuffer
 final class MetalContext {
     static let shared = MetalContext()
     let device: MTLDevice?
@@ -16,8 +16,9 @@ final class MetalContext {
     }
 }
 
-/// 鐐归樀 + 鍏夋潫闆?+ 绮掑瓙鐖嗚锛岀粺涓€鐢?MTKView 椹卞姩
-/// 瀵瑰簲鍘?effects.cpp + Music 鐨?Metal 鎮诞缁樺埗灞?final class MetalFXView: MTKView {
+/// 点阵 + 光束雨 + 粒子爆裂，统一由 MTKView 驱动
+/// 对应原 effects.cpp + Music 的 Metal 悬浮绘制层
+final class MetalFXView: MTKView {
     private var pipelineState: MTLRenderPipelineState?
     private var vertexBuffer: MTLBuffer?
 
@@ -159,7 +160,7 @@ final class MetalContext {
         vertexData.removeAll(keepingCapacity: true)
         let ar = w / max(h, 1)
 
-        // 鐐归樀
+        // 点阵
         if showDots {
             let (dr, dg, db, da) = dotRGBA()
             let spacing: Float = 16
@@ -174,7 +175,8 @@ final class MetalContext {
             }
         }
 
-        // 鍏夋潫闆?        if showBeams {
+        // 光束雨
+        if showBeams {
             let (ar_, ag, ab, aa) = accentRGBA()
             for i in 0..<beams.count {
                 var b = beams[i]
@@ -200,7 +202,7 @@ final class MetalContext {
             }
         }
 
-        // 绮掑瓙
+        // 粒子
         if !particles.isEmpty {
             let (ar_, ag, ab, _) = accentRGBA()
             var alive: [Particle] = []
@@ -264,4 +266,3 @@ extension MetalFXView: MTKViewDelegate {
         cmd.commit()
     }
 }
-

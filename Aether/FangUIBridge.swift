@@ -4,7 +4,7 @@ import UIKit
 /// Power ON → overlay appears; Power OFF → auto dismiss.
 enum FangUIBridge {
     private static var host: FangUIHost?
-    private static weak var onPowerOff: ((Bool) -> Void)?
+    private static var onPowerOff: ((Bool) -> Void)?
 
     static var isVisible: Bool {
         guard let h = host else { return false }

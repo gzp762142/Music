@@ -1,7 +1,7 @@
-﻿import UIKit
+import UIKit
 
-/// 鏍规帶鍒跺櫒锛歁etal 鐗规晥灞?+ 鍗＄墖 + 鏍囬鏍?+ 鍒嗛〉鍐呭 + 搴曢儴鐜荤拑瀵艰埅
-/// 鏋舵瀯瀵归綈 Music 澶栨寕锛歎IKit 鍋氳彍鍗曪紝Metal 鍋氳儗鏅?鐗规晥缁樺埗
+/// 根控制器：Metal 特效层 + 卡片 + 标题栏 + 分页内容 + 底部玻璃导航
+/// 架构对齐 Music 外挂：UIKit 做菜单，Metal 做背景/特效绘制
 final class RootViewController: UIViewController {
     private let state = FangUIState()
     private var palette = Palette.light
@@ -57,7 +57,7 @@ final class RootViewController: UIViewController {
         subtitleLabel.font = .systemFont(ofSize: 13)
         subtitleLabel.text = tabSubs[0]
         badgeLabel.font = .systemFont(ofSize: 13, weight: .medium)
-        badgeLabel.text = "  鈼?Ready  "
+        badgeLabel.text = "  ● Ready  "
         badgeLabel.layer.cornerRadius = 15
         badgeLabel.clipsToBounds = true
 
@@ -194,15 +194,17 @@ final class RootViewController: UIViewController {
         lastTs = now
         if dt > 0.1 { dt = 0.1 }
 
-        // 涓婚杩囨浮锛堝搴?Approach锛?        let target: CGFloat = state.dark ? 1 : 0
+        // 主题过渡（对应 Approach）
+        let target: CGFloat = state.dark ? 1 : 0
         state.themeT = FangUIState.approach(state.themeT, target, dt: dt, speed: 8)
 
-        // 瀵艰埅寮圭哀锛堝搴?Spring锛?        var vel = state.navVel
+        // 导航弹簧（对应 Spring）
+        var vel = state.navVel
         state.navIndic = FangUIState.spring(state.navIndic, CGFloat(state.page), vel: &vel, dt: dt)
         state.navVel = vel
         updateIndicator(animated: false)
 
-        // 鏍囬娣″叆娣″嚭
+        // 标题淡入淡出
         if state.titlePage != state.page {
             state.titleFade -= dt / 0.12
             if state.titleFade <= 0 {
@@ -217,7 +219,7 @@ final class RootViewController: UIViewController {
         titleLabel.alpha = state.titleFade
         subtitleLabel.alpha = state.titleFade
 
-        // 涓婚鑹茶繛缁埛
+        // 主题色连续刷
         let p = Palette.lerp(state.themeT)
         palette = p
         view.backgroundColor = p.bg
@@ -279,4 +281,3 @@ final class RootViewController: UIViewController {
         displayLink?.invalidate()
     }
 }
-

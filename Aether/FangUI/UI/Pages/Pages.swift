@@ -1,10 +1,10 @@
-﻿import UIKit
+import UIKit
 
 protocol PageBuildable: AnyObject {
     func rebuild(palette: Palette)
 }
 
-/// 椤?0锛歄verview 鈥斺€?鎸夐挳 / 婊戞潯 / 涓嬫媺 / 杈撳叆
+/// 页 0：Overview —— 按钮 / 滑条 / 下拉 / 输入
 final class OverviewPage: UIView, PageBuildable {
     private let stack = UIStackView()
     private let primaryBtn = UIButton(type: .system)
@@ -59,7 +59,7 @@ final class OverviewPage: UIView, PageBuildable {
     @objc private func onText() { state.textBuf = textField.text ?? "" }
 
     @objc private func onLang() {
-        let langs = ["English", "涓枃", "鏃ユ湰瑾?, "Espa帽ol"]
+        let langs = ["English", "中文", "日本語", "Español"]
         let sheet = UIAlertController(title: "Language", message: nil, preferredStyle: .actionSheet)
         langs.enumerated().forEach { i, name in
             sheet.addAction(UIAlertAction(title: name, style: .default) { _ in
@@ -68,8 +68,12 @@ final class OverviewPage: UIView, PageBuildable {
             })
         }
         sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        if let root = UIApplication.shared.connectedScenes
-            .compactMap({ ($0 as? UIWindowScene)?.keyWindow?.rootViewController }).first {
+        // UIWindowScene.keyWindow is iOS 15+; walk windows for iOS 13.
+        let key = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+            .first { $0.isKeyWindow }
+        if let root = key?.rootViewController {
             root.present(sheet, animated: true)
         }
     }
@@ -115,7 +119,7 @@ final class OverviewPage: UIView, PageBuildable {
     }
 }
 
-/// 椤?1锛欳ontrols 鈥斺€?鍕鹃€?/ 寮€鍏?/ 鍗曢€?/ 闊抽噺 / 璐ㄩ噺
+/// 页 1：Controls —— 勾选 / 开关 / 单选 / 音量 / 质量
 final class ControlsPage: UIView, PageBuildable {
     private let stack = UIStackView()
     private let state: FangUIState
@@ -214,7 +218,8 @@ final class ControlsPage: UIView, PageBuildable {
     }
 }
 
-/// 椤?2锛欳olors 鈥斺€?鑹叉澘 / 鍙栬壊 / 杩涘害鏉?final class ColorsPage: UIView, PageBuildable {
+/// 页 2：Colors —— 色板 / 取色 / 进度条
+final class ColorsPage: UIView, PageBuildable {
     private let stack = UIStackView()
     private let swatchRow = UIStackView()
     private let progress = UIProgressView(progressViewStyle: .default)
@@ -280,7 +285,7 @@ final class ControlsPage: UIView, PageBuildable {
     }
 }
 
-/// 椤?3锛欵ffects 鈥斺€?鑳屾櫙鐗规晥寮€鍏?/ 绮掑瓙
+/// 页 3：Effects —— 背景特效开关 / 粒子
 final class EffectsPage: UIView, PageBuildable {
     private let stack = UIStackView()
     private let state: FangUIState
@@ -303,8 +308,8 @@ final class EffectsPage: UIView, PageBuildable {
         beamsSwitch.addTarget(self, action: #selector(onBeams), for: .valueChanged)
         dotsSwitch.isOn = state.showDots
         dotsSwitch.addTarget(self, action: #selector(onDots), for: .valueChanged)
-        stack.addArrangedSubview(RowView(title: "Beam rain (闆ㄤ笣鍏夋潫)", control: beamsSwitch))
-        stack.addArrangedSubview(RowView(title: "Dot grid (鐐归樀绾圭悊)", control: dotsSwitch))
+        stack.addArrangedSubview(RowView(title: "Beam rain (雨丝光束)", control: beamsSwitch))
+        stack.addArrangedSubview(RowView(title: "Dot grid (点阵纹理)", control: dotsSwitch))
 
         let sec2 = SectionLabel(); sec2.text = "PARTICLE BURST"
         stack.addArrangedSubview(sec2)
@@ -317,7 +322,7 @@ final class EffectsPage: UIView, PageBuildable {
         let about = UILabel()
         about.numberOfLines = 0
         about.font = .systemFont(ofSize: 13)
-        about.text = "UIKit 鑿滃崟 + Metal 鐗规晥銆傚搴斿師 ImGui FangUI锛氭槑/鏆椾富棰樿繃娓°€佺偣闃佃儗鏅€侀洦涓濆厜鏉熴€佺矑瀛愮垎瑁傘€佸脊鎬ц嵂涓稿鑸€?
+        about.text = "UIKit 菜单 + Metal 特效。对应原 ImGui FangUI：明/暗主题过渡、点阵背景、雨丝光束、粒子爆裂、弹性药丸导航。"
         about.tag = 999
         stack.addArrangedSubview(about)
     }
@@ -351,4 +356,3 @@ final class EffectsPage: UIView, PageBuildable {
         stack.frame = bounds.insetBy(dx: 4, dy: 4)
     }
 }
-

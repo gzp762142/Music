@@ -9,13 +9,11 @@ iOS 壳子（加载 → 卡密 → 控制台），身份皮对齐 Apple Music。
 
 ## FangUI 接入
 
-- 源码：`Aether/FangUI/`（UIKit 菜单 + Metal 特效）
-- **独立 `UIWindow`**，`windowLevel = statusBar + 1`，不是 keyWindow 上的 subview
-- 依赖 Music 身份证（platform / no-sandbox / springboard window-hosting）尽量悬浮在其他 App 之上
-- **卡密通过后默认关闭**
-- **开启** 电源 → 创建并显示悬浮窗；**关闭** → hidden 并释放
-- **音量+** → 显示；**音量-** → 隐藏（电源状态可不变）
-- 右上角「关闭」= 关电源并收起
+- **独立 `FangUIOverlayWindow`**，`windowLevel`：前台 `statusBar+1`，后台 `alert+1000`
+- 进后台 **不释放**，心跳 + 生命周期通知里 `reassert`（配合 platform / no-sandbox / accessibility-window-hosting）
+- **半透明可拖小面板**（约 340×520），空白区 `hitTest` 穿透，不全屏挡游戏
+- **卡密后默认关**；电源开 / 音量+ 显示；电源关 / 音量- / 面板「关闭」隐藏并释放
+- 身份 entitlements 不改
 
 ## 本地生成工程
 

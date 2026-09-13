@@ -4,31 +4,26 @@ protocol PageBuildable: AnyObject {
     func rebuild(palette: Palette)
 }
 
-/// 页面统一约定：内容栈高度只由内容决定（不被容器摊开成巨大间距），
-/// 超出可视高度时交给外层 UIScrollView 滚动。
+/// 页面统一约定：内容栈宽度跟随页面、高度只由内容决定
+/// （不会被容器摊开成巨大间距），超出可视高度时交给外层 UIScrollView。
 protocol PageSizing: PageBuildable {
     var contentStack: UIStackView { get }
 }
 
 extension PageSizing where Self: UIView {
-    func pageContentHeight(forWidth width: CGFloat) -> CGFloat {
-        ceil(fangStackSize(forWidth: width).height) + 8
-    }
-
-    func layoutContentStack() {
-        let size = fangStackSize(forWidth: bounds.width)
-        contentStack.frame = CGRect(x: 4, y: 4,
-                                    width: max(bounds.width - 8, 1),
-                                    height: size.height)
-    }
-
-    func fangStackSize(forWidth width: CGFloat) -> CGSize {
-        let w = max(width - 8, 1)
-        return contentStack.systemLayoutSizeFitting(
-            CGSize(width: w, height: UIView.layoutFittingCompressedSize.height),
-            withHorizontalFittingPriority: .required,
-            verticalFittingPriority: .fittingSizeLevel
-        )
+    /// 用约束把内容栈钉在页面四边：宽度继承页面宽度，高度由内容撑开。
+    /// 约束链一路连到窗口，杜绝手工 frame 在异常尺寸下算成 1 字符宽。
+    func installContentStackConstraints() {
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        if contentStack.superview == nil {
+            addSubview(contentStack)
+        }
+        NSLayoutConstraint.activate([
+            contentStack.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            contentStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            contentStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            contentStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4)
+        ])
     }
 }
 
@@ -142,10 +137,6 @@ final class OverviewPage: UIView, PageSizing {
         }
     }
 
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        layoutContentStack()
-    }
 }
 
 /// 页 1：Controls —— 勾选 / 开关 / 单选 / 音量 / 质量
@@ -242,10 +233,6 @@ final class ControlsPage: UIView, PageSizing {
         }
     }
 
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        layoutContentStack()
-    }
 }
 
 /// 页 2：Colors —— 色板 / 取色 / 进度条
@@ -310,10 +297,6 @@ final class ColorsPage: UIView, PageSizing {
         }
     }
 
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        layoutContentStack()
-    }
 }
 
 /// 页 3：Effects —— 背景特效开关 / 粒子
@@ -381,10 +364,5 @@ final class EffectsPage: UIView, PageSizing {
             if let r = $0 as? RowView { r.apply(palette: palette) }
             if $0.tag == 999, let l = $0 as? UILabel { l.textColor = palette.textDim }
         }
-    }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        layoutContentStack()
     }
 }

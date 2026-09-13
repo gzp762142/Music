@@ -270,6 +270,8 @@ final class RowView: UIView {
         super.init(frame: .zero)
         label.text = title
         label.font = .systemFont(ofSize: 15)
+        label.numberOfLines = 1
+        label.lineBreakMode = .byTruncatingTail
         addSubview(label)
         addSubview(control)
     }
@@ -307,6 +309,9 @@ final class SectionLabel: UILabel {
     override init(frame: CGRect) {
         super.init(frame: frame)
         font = .systemFont(ofSize: 12, weight: .semibold)
+        // 单行：宽度异常时宁可截断，也不要逐字竖排
+        numberOfLines = 1
+        lineBreakMode = .byTruncatingTail
     }
 
     required init?(coder: NSCoder) { super.init(coder: coder) }

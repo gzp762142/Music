@@ -72,8 +72,15 @@ final class RootViewController: UIViewController {
         brandSub.text = "UI THEME KIT"
         titleLabel.font = .systemFont(ofSize: 24, weight: .bold)
         titleLabel.text = tabTitles[0]
+        titleLabel.adjustsFontSizeToFitWidth = true
+        titleLabel.minimumScaleFactor = 0.7
         subtitleLabel.font = .systemFont(ofSize: 13)
         subtitleLabel.text = tabSubs[0]
+        // 顶栏文本一律单行：宽度异常时截断，不要逐字竖排
+        [brandLabel, brandSub, titleLabel, subtitleLabel, badgeLabel].forEach {
+            $0.numberOfLines = 1
+            $0.lineBreakMode = .byTruncatingTail
+        }
         badgeLabel.font = .systemFont(ofSize: 13, weight: .medium)
         badgeLabel.text = "  ● Ready  "
         badgeLabel.textAlignment = .center
@@ -93,8 +100,16 @@ final class RootViewController: UIViewController {
         scrollView.clipsToBounds = true
         cardView.addSubview(scrollView)
 
-        contentContainer.frame = .zero
+        // 内容容器：宽度锁在滚动视口上，高度由最"高"的页面内容决定。
+        contentContainer.translatesAutoresizingMaskIntoConstraints = false
         scrollView.addSubview(contentContainer)
+        NSLayoutConstraint.activate([
+            contentContainer.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+            contentContainer.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+            contentContainer.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            contentContainer.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            contentContainer.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor)
+        ])
 
         pages = [
             OverviewPage(state: state),
@@ -109,6 +124,13 @@ final class RootViewController: UIViewController {
             p.translatesAutoresizingMaskIntoConstraints = false
             p.isHidden = true
             contentContainer.addSubview(p)
+            p.installContentStackConstraints()
+            NSLayoutConstraint.activate([
+                p.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
+                p.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
+                p.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+                p.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor)
+            ])
         }
         pages[0].isHidden = false
 
@@ -214,19 +236,12 @@ final class RootViewController: UIViewController {
                               width: navW, height: navH)
         layoutNav()
 
-        // 内容区：外层滚动，页面高度按内容算，不再被摊开成巨大间距。
+        // 内容区：宽度由约束链锁定，高度由页面内容撑开，滚动交给 UIScrollView。
         let contentTop = top + headerH
         let contentBottom = navBar.frame.minY - 12
         scrollView.frame = CGRect(x: pad, y: contentTop,
                                   width: W - pad * 2,
                                   height: max(40, contentBottom - contentTop))
-
-        let pageW = scrollView.bounds.width
-        let pageH = max(scrollView.bounds.height,
-                        pages[state.page].pageContentHeight(forWidth: pageW))
-        contentContainer.frame = CGRect(x: 0, y: 0, width: pageW, height: pageH)
-        scrollView.contentSize = contentContainer.bounds.size
-        pages.forEach { $0.frame = contentContainer.bounds }
     }
 
     private func layoutNav() {

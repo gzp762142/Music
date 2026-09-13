@@ -136,17 +136,24 @@ enum FangUIBridge {
     /// 用窗口所属场景的坐标空间直接得出 window frame。
     /// 旧实现按 interfaceOrientation 手工拼长宽，在 iPad 横屏 SpringBoard 下会
     /// 算出转过 90° 的 bounds —— 那正是面板旋转、错位、露出桌面的根因。
+    /// 这里再取「场景坐标空间 / 屏幕」里更大的那一份，保证铺满整屏：某些 iPad
+    /// 分屏或横竖屏组合下 coordinateSpace 会给出竖屏尺寸。
     private static func applySceneGeometry(_ w: UIWindow) {
         w.transform = .identity
 
-        var frame = UIScreen.main.bounds
+        let screen = UIScreen.main.bounds
+        var size = screen.size
         if #available(iOS 13.0, *) {
             if let scene = w.windowScene ?? preferredWindowScene() {
                 let cs = scene.coordinateSpace.bounds
-                if cs.width > 1, cs.height > 1 { frame = cs }
+                if cs.width > 1, cs.height > 1 {
+                    size = CGSize(width: max(screen.width, cs.width),
+                                  height: max(screen.height, cs.height))
+                }
             }
         }
 
+        let frame = CGRect(origin: .zero, size: size)
         guard w.frame != frame else { return }
         w.frame = frame
         w.setNeedsLayout()

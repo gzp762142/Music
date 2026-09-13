@@ -34,6 +34,26 @@ enum FangUIBridge {
     /// 所以必须另有一个逻辑开关，否则生命周期通知会把它重新亮出来。
     private static var isOpen = false
 
+    /// SpringBoard 托管开关（排查重影用）。**启动时读取**：
+    /// `registerWindowWithContextID:` 没有对应的注销接口，运行期改这个值
+    /// 不会撤掉已经注册的托管层，所以只能靠重启生效。
+    private static let hostingKey = "FangUI.SpringBoardHostingEnabled"
+
+    static var hostingEnabled: Bool {
+        get {
+            if UserDefaults.standard.object(forKey: hostingKey) == nil { return true }
+            return UserDefaults.standard.bool(forKey: hostingKey)
+        }
+        set { UserDefaults.standard.set(newValue, forKey: hostingKey) }
+    }
+
+    /// 翻转托管开关，返回新状态；需要重启 App 才生效。
+    @discardableResult
+    static func toggleHosting() -> Bool {
+        hostingEnabled.toggle()
+        return hostingEnabled
+    }
+
     /// 拖动把手回调：把面板搬到新位置并记住。
     static func setPanelCenter(_ center: CGPoint) {
         customCenter = center
@@ -158,7 +178,7 @@ enum FangUIBridge {
     /// 只对一个窗口的 contextID 注册一次：同一个窗口重复调用没有意义，
     /// 反而给 SpringBoard 制造重复托管的机会。
     private static func registerWithSpringBoard(_ w: UIWindow) {
-        guard isOpen else { return }
+        guard isOpen, hostingEnabled else { return }
         if registeredContextWindow === w { return }
         let ok = FangUISBSHosting.shared().register(w, atLevel: Double(w.windowLevel.rawValue))
         if ok {
@@ -272,7 +292,12 @@ enum FangUIBridge {
         return CGRect(origin: origin, size: normalized)
     }
 
-    /// 面板几何快照，供诊断行显示（含两个来源，便于实机定位）。
+    /// 面板几何快照，供诊断行显示。
+    ///
+    /// 这一行是实机排查的唯一抓手，所以同时给出「进程内有几个我们的窗口」
+    /// 和「SpringBoard 托管是否注册成功」——两者组合能区分两种重影来源：
+    ///   `#w1 sbsY` + 仍看到两份 → 第二份来自 SpringBoard 的托管层；
+    ///   `#w2` 以上            → 进程内真的建了多个窗口。
     static func geometryDescription() -> String {
         let screen = UIScreen.main.bounds.size
         var sceneSize = CGSize.zero
@@ -283,10 +308,27 @@ enum FangUIBridge {
         }
         let size = window?.bounds.size ?? .zero
         let space = layoutSpace()
-        return String(format: "sp %.0f×%.0f · sc %.0f×%.0f · win %.0f×%.0f · %@",
-                      space.width, space.height, screen.width, screen.height,
-                      size.width, size.height,
-                      PanelOrientation.describe())
+        let count = overlayWindowCount()
+        let sbs = registeredContextWindow != nil ? "Y" : "N"
+        let ori: String
+        switch currentOrientation() {
+        case .landscapeLeft: ori = "L"
+        case .landscapeRight: ori = "R"
+        case .portraitUpsideDown: ori = "U"
+        default: ori = "P"
+        }
+        return String(format: "#w%d sbs%@ ori%@ %@ · sp %.0f×%.0f · sc %.0f×%.0f · win %.0f×%.0f",
+                      count, sbs, ori,
+                      PanelOrientation.describe(),
+                      space.width, space.height,
+                      sceneSize.width, sceneSize.height,
+                      size.width, size.height)
+    }
+
+    /// 进程内属于我们自己的悬浮窗口数量（正常应为 1）。
+    static func overlayWindowCount() -> Int {
+        let all = UIApplication.shared.windows
+        return all.filter { $0 is FangUIOverlayWindow }.count
     }
 
     /// 长按品牌区循环切换方向修正。

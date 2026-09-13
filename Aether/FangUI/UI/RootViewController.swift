@@ -197,6 +197,14 @@ final class RootViewController: UIViewController {
         // 放宽位移容差：手指微动不该让长按失败（否则会被 pan 抢走）。
         cycle.allowableMovement = 24
         dragHandle.addGestureRecognizer(cycle)
+
+        // 双指长按整卡：翻转 SpringBoard 托管开关（排查重影用，需重启生效）。
+        let hostToggle = UILongPressGestureRecognizer(
+            target: self, action: #selector(onToggleHosting(_:))
+        )
+        hostToggle.numberOfTouchesRequired = 2
+        hostToggle.minimumPressDuration = 0.8
+        cardView.addGestureRecognizer(hostToggle)
         cardView.addSubview(dragHandle)
 
         applyPalette(animated: false)
@@ -481,6 +489,14 @@ final class RootViewController: UIViewController {
         guard g.state == .began else { return }
         let label = FangUIBridge.cycleOrientationFix()
         badgeLabel.text = "  ● \(label)  "
+        view.setNeedsLayout()
+    }
+
+    /// 双指长按：翻转 SpringBoard 托管（重启生效）。
+    @objc private func onToggleHosting(_ g: UILongPressGestureRecognizer) {
+        guard g.state == .began else { return }
+        let on = FangUIBridge.toggleHosting()
+        badgeLabel.text = on ? "  ● sbs on·重启  " : "  ● sbs off·重启  "
         view.setNeedsLayout()
     }
 

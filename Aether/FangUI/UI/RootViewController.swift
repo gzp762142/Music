@@ -464,7 +464,7 @@ final class RootViewController: UIViewController {
         guard g.state == .began else { return }
         let label = FangUIBridge.cycleOrientationFix()
         badgeLabel.text = "  ● \(label)  "
-        setNeedsLayout()
+        view.setNeedsLayout()
     }
 
     deinit {

@@ -23,6 +23,15 @@ enum FangUIBridge {
     private static var surface: UIColor = Palette.light.bg
     /// 面板控制器强引用（视图挂在窗口上，控制器不能被释放）。
     private static var panel: RootViewController?
+    /// 用户拖动后的窗口位置：心跳重设几何时沿用它，不再回到默认位。
+    private static var customFrame: CGRect?
+
+    /// 拖动把手回调：把窗口搬到新位置并记住。
+    static func setPanelFrame(_ frame: CGRect) {
+        customFrame = frame
+        guard let w = window else { return }
+        applySceneGeometry(w)
+    }
 
     /// TrollEngine SHMainWnd: UIWindowLevelStatusBar + 2000
     private static let levelSystem = UIWindow.Level(rawValue: UIWindow.Level.statusBar.rawValue + 2000)
@@ -57,9 +66,10 @@ enum FangUIBridge {
 
         let w = FangUIOverlayWindow(frame: .zero)
         w.windowLevel = levelSystem
-        // 不透明底：FangUI 面板是唯一可见层，不存在背景图 / 桌面穿透。
-        w.backgroundColor = surface
-        w.isOpaque = true
+        // 窗口只覆盖卡片本身（含阴影边距）：卡片不透明，
+        // 卡片之外透出桌面或下层 app —— 这才是外挂悬浮菜单的形态。
+        w.backgroundColor = .clear
+        w.isOpaque = false
 
         // 宿主 VC 只管窗口状态；面板视图直接挂在窗口上，
         // 绕开 UIKit 对 rootViewController.view 的方向旋转。
@@ -142,31 +152,31 @@ enum FangUIBridge {
         }
     }
 
-    /// 用窗口所属场景的坐标空间直接得出 window frame。
-    /// 旧实现按 interfaceOrientation 手工拼长宽，在 iPad 横屏 SpringBoard 下会
-    /// 算出转过 90° 的 bounds —— 那正是面板旋转、错位、露出桌面的根因。
-    /// 这里再取「场景坐标空间 / 屏幕」里更大的那一份，保证铺满整屏：某些 iPad
-    /// 分屏或横竖屏组合下 coordinateSpace 会给出竖屏尺寸。
+    /// 面板 ＝ 一块悬浮卡片：窗口只覆盖卡片（加上阴影边距），
+    /// 卡片之外是桌面或下层 app。每轮布局都强制 transform 归位，
+    /// 压掉 UIKit 按界面方向施加的 90° 旋转。
     private static func applySceneGeometry(_ w: UIWindow) {
-        // 方向纠偏：UIKit 会按 scene 的界面方向旋转内容，
-        // 这里每轮布局都把窗口、宿主 VC 视图、面板视图的 transform 归位。
         w.transform = .identity
         w.rootViewController?.view.transform = .identity
         panel?.view.transform = .identity
 
         let screen = UIScreen.main.bounds
-        var size = screen.size
-        if #available(iOS 13.0, *) {
-            if let scene = w.windowScene ?? preferredWindowScene() {
-                let cs = scene.coordinateSpace.bounds
-                if cs.width > 1, cs.height > 1 {
-                    size = CGSize(width: max(screen.width, cs.width),
-                                  height: max(screen.height, cs.height))
-                }
-            }
-        }
+        let inset = RootViewController.shadowInset
+        let panelW = min(max(screen.width * 0.42, 360), 560)
+        let panelH = min(max(screen.height * 0.62, 320), 470)
+        let winW = panelW + inset * 2
+        let winH = panelH + inset * 2
 
-        let frame = CGRect(origin: .zero, size: size)
+        var frame = customFrame ?? CGRect(
+            x: (screen.width - winW) / 2,
+            y: max(screen.height * 0.10, (screen.height - winH) / 2 - 40),
+            width: winW, height: winH
+        )
+        frame.size = CGSize(width: winW, height: winH)
+        // 无论默认位还是拖动位，都夹在屏幕内，旋转后也不会跑出去。
+        frame.origin.x = min(max(frame.origin.x, 0), max(0, screen.width - winW))
+        frame.origin.y = min(max(frame.origin.y, 0), max(0, screen.height - winH))
+
         if w.frame != frame {
             w.frame = frame
             w.setNeedsLayout()

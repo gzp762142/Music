@@ -12,8 +12,13 @@ final class RootViewController: UIViewController {
     private var palette = Palette.light
     private var lastSurface: UIColor?
 
+    /// 窗口比卡片四周各留这么多，用于渲染卡片阴影。
+    static let shadowInset: CGFloat = 14
+
     private let fxView = MetalFXView(frame: .zero, device: MetalContext.shared.device)
+    private let cardShadow = UIView()
     private let cardView = UIView()
+    private let dragHandle = UIView()
     private let closeBtn = UIButton(type: .system)
     private let titleLabel = UILabel()
     private let subtitleLabel = UILabel()
@@ -46,13 +51,20 @@ final class RootViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = palette.bg
-        view.isOpaque = true
+        view.backgroundColor = .clear
+        view.isOpaque = false
 
-        // 面板铺满整个窗口且自身不透明：画面上只有 FangUI，没有桌面/背景图。
+        // 阴影层：窗口比卡片大一圈，阴影落在这里，不会被窗口裁掉。
+        cardShadow.layer.shadowColor = UIColor.black.cgColor
+        cardShadow.layer.shadowOpacity = 0.22
+        cardShadow.layer.shadowRadius = 14
+        cardShadow.layer.shadowOffset = CGSize(width: 0, height: 6)
+        view.addSubview(cardShadow)
+
+        // 卡片本体：圆角 + 裁剪 + 不透明底色，是画面上唯一的不透明面。
         cardView.clipsToBounds = true
-        cardView.layer.cornerRadius = 0
-        view.addSubview(cardView)
+        cardView.layer.cornerRadius = 22
+        cardShadow.addSubview(cardView)
 
         // Metal 点阵 + 光束画在面板内部，作为 FangUI 自己的背景。
         fxView.translatesAutoresizingMaskIntoConstraints = false
@@ -72,7 +84,7 @@ final class RootViewController: UIViewController {
         brandLabel.font = .systemFont(ofSize: 20, weight: .bold)
         brandLabel.text = "DsTool"
         brandSub.font = .systemFont(ofSize: 11, weight: .medium)
-        brandSub.text = "UI THEME KIT · v4"
+        brandSub.text = "UI THEME KIT · v5"
         titleLabel.font = .systemFont(ofSize: 24, weight: .bold)
         titleLabel.text = tabTitles[0]
         titleLabel.adjustsFontSizeToFitWidth = true
@@ -171,6 +183,13 @@ final class RootViewController: UIViewController {
             navButtons.append(b)
         }
 
+        // 顶栏左侧拖拽把手：按住可把卡片拖到屏幕任意位置。
+        dragHandle.backgroundColor = .clear
+        dragHandle.addGestureRecognizer(
+            UIPanGestureRecognizer(target: self, action: #selector(onDrag(_:)))
+        )
+        cardView.addSubview(dragHandle)
+
         applyPalette(animated: false)
         startDisplayLink()
     }
@@ -181,8 +200,10 @@ final class RootViewController: UIViewController {
         // 每轮布局都归位：任何方向旋转都在这里被抹掉。
         if view.transform != .identity { view.transform = .identity }
 
-        // 面板 ＝ 整个窗口。
-        cardView.frame = view.bounds
+        // 卡片浮在窗口里，四周留出阴影边距。
+        cardShadow.frame = view.bounds.insetBy(dx: RootViewController.shadowInset,
+                                                dy: RootViewController.shadowInset)
+        cardView.frame = cardShadow.bounds
 
         let W = cardView.bounds.width
         let H = cardView.bounds.height
@@ -258,6 +279,11 @@ final class RootViewController: UIViewController {
         // 诊断行贴在导航条上方：窗口 / 面板 / 内容尺寸，用来确认版本与几何。
         diagLabel.frame = CGRect(x: pad, y: navBar.frame.minY - 20,
                                  width: W - pad * 2, height: 14)
+
+        // 拖拽把手覆盖顶栏左侧品牌区，右侧的开关 / 徽章 / 关闭不受影响。
+        dragHandle.frame = CGRect(x: 0, y: 0,
+                                  width: min(W * 0.45, 220),
+                                  height: top + headerH)
     }
 
     private func layoutNav() {
@@ -336,7 +362,7 @@ final class RootViewController: UIViewController {
         // 主题色连续刷
         let p = Palette.lerp(state.themeT)
         palette = p
-        view.backgroundColor = p.bg
+        view.backgroundColor = .clear
         cardView.backgroundColor = p.bg
         navBar.backgroundColor = p.navBar
         navIndicator.backgroundColor = p.accent
@@ -369,12 +395,9 @@ final class RootViewController: UIViewController {
             diagLabel.textColor = p.textDim
             let screen = UIScreen.main.bounds
             diagLabel.text = String(
-                format: "win %.0f×%.0f · card %.0f×%.0f · page %.0f×%.0f · s0 %.0f×%.0f/%d · tf %.2f/%.2f · %@",
+                format: "win %.0f×%.0f · card %.0f×%.0f · tf %.2f/%.2f · %@",
                 view.bounds.width, view.bounds.height,
                 cardView.bounds.width, cardView.bounds.height,
-                contentContainer.bounds.width, contentContainer.bounds.height,
-                pages[0].contentStack.bounds.width, pages[0].contentStack.bounds.height,
-                pages[0].contentStack.arrangedSubviews.count,
                 view.transform.a, view.transform.b,
                 screen.width >= screen.height ? "landscape" : "portrait"
             )
@@ -384,7 +407,7 @@ final class RootViewController: UIViewController {
     private func applyPalette(animated: Bool) {
         let p = Palette.lerp(state.themeT)
         palette = p
-        view.backgroundColor = p.bg
+        view.backgroundColor = .clear
         cardView.backgroundColor = p.bg
         navBar.backgroundColor = p.navBar
         closeBtn.backgroundColor = p.accentSoft
@@ -424,6 +447,17 @@ final class RootViewController: UIViewController {
 
     @objc private func onCloseTap() {
         onRequestClose?()
+    }
+
+    /// 拖拽把手：把悬浮窗口搬到新位置（坐标写回 Bridge，心跳重设几何时沿用）。
+    @objc private func onDrag(_ g: UIPanGestureRecognizer) {
+        guard let win = view.window, let superview = win.superview else { return }
+        let t = g.translation(in: superview)
+        g.setTranslation(.zero, in: superview)
+        var frame = win.frame
+        frame.origin.x += t.x
+        frame.origin.y += t.y
+        FangUIBridge.setPanelFrame(frame)
     }
 
     deinit {

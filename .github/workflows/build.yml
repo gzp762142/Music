@@ -71,37 +71,55 @@ jobs:
           mkdir -p Payload
           cp -R "$APP_PATH" Payload/
 
-          ENT="$(pwd)/Music.entitlements"
-          test -f "$ENT"
+          # Use a clean temp plist path (no spaces / odd chars).
+          cp Music.entitlements /tmp/Music.entitlements
+          ENT=/tmp/Music.entitlements
           BIN="Payload/Music.app/Music"
           test -f "$BIN"
 
-          echo "Signing Mach-O with: $ENT"
-          # Sign the executable (not just the .app dir). -S<path> embeds the plist.
+          echo "Signing Mach-O with $ENT"
+          # -S<path> embeds the plist into the code signature.
+          # Bare `ldid -S` → empty entitlements → sandboxed App under TrollStore.
           ldid -S"$ENT" "$BIN"
           echo "ldid sign exit=$?"
 
-          echo "---- embedded entitlements ----"
-          # Some brew ldid builds assert on `ldid -e <bundle>`; dump from the binary.
-          # Prefer codesign dump; fall back to ldid -e on the binary only.
+          # codesign often "succeeds" with 0-byte dump on ldid adhoc binaries.
+          # ldid -e on the Mach-O is the reliable dump; some brew builds assert
+          # on the .app bundle, so always point at the binary.
           DUMP=/tmp/embedded.plist
-          if codesign -d --entitlements :- "$BIN" >"$DUMP" 2>/tmp/codesign.err; then
-            echo "codesign dump ok"
-          else
-            echo "codesign dump failed, trying ldid -e on binary"
-            cat /tmp/codesign.err || true
-            ldid -e "$BIN" >"$DUMP"
-          fi
-          echo "dump bytes=$(wc -c <"$DUMP")"
-          cat "$DUMP"
-          grep -q 'com.apple.Music' "$DUMP"
-          grep -q 'platform-application' "$DUMP"
-          grep -q 'no-sandbox' "$DUMP"
-          echo "entitlements OK"
+          : >"$DUMP"
+          set +e
+          ldid -e "$BIN" >"$DUMP" 2>/tmp/ldid_e.err
+          LEC=$?
+          set -e
+          echo "ldid -e exit=$LEC bytes=$(wc -c <"$DUMP")"
+          cat /tmp/ldid_e.err || true
 
-          # App Switcher / multitasking on some iOS builds reads loose
-          # AppIcon*.png from the bundle root (same as stock Music.ipa).
-          # Asset catalog alone can leave a stale/wrong switcher icon.
+          if [ ! -s "$DUMP" ]; then
+            echo "ldid -e empty, trying codesign"
+            set +e
+            codesign -d --entitlements :- "$BIN" >"$DUMP" 2>/tmp/cs.err
+            set -e
+            cat /tmp/cs.err || true
+            echo "codesign dump bytes=$(wc -c <"$DUMP")"
+          fi
+
+          if [ ! -s "$DUMP" ]; then
+            echo "Could not dump entitlements via ldid/codesign" >&2
+            # Last resort: strings on the binary must still contain keys we signed.
+            strings "$BIN" | tee /tmp/bin.strings | grep -q 'com.apple.Music'
+            grep -q 'platform-application' /tmp/bin.strings
+            grep -q 'no-sandbox' /tmp/bin.strings
+            echo "entitlements OK (verified via strings)"
+          else
+            echo "---- embedded entitlements ----"
+            cat "$DUMP"
+            grep -q 'com.apple.Music' "$DUMP"
+            grep -q 'platform-application' "$DUMP"
+            grep -q 'no-sandbox' "$DUMP"
+            echo "entitlements OK"
+          fi
+
           echo "Copying loose AppIcon*.png into app bundle root"
           cp -f Assets.xcassets/AppIcon.appiconset/AppIcon*.png Payload/Music.app/
           ls Payload/Music.app/AppIcon*.png | head

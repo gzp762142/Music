@@ -28,8 +28,10 @@ jobs:
           xcodebuild -version
           xcode-select -p
 
-      - name: Install xcodegen
-        run: brew install xcodegen
+      - name: Install tools
+        run: |
+          set -euo pipefail
+          brew install xcodegen ldid
 
       - name: Generate and downgrade pbxproj format
         run: |
@@ -37,14 +39,9 @@ jobs:
           rm -rf Music.xcodeproj
           xcodegen generate
           PBX=Music.xcodeproj/project.pbxproj
-          echo "---- before ----"
-          grep -E 'objectVersion|compatibilityVersion|LastUpgradeCheck' "$PBX" || true
-          # Xcode 15.4 can only open <=60; newer xcodegen emits 77.
           sed -i '' -E 's/objectVersion = [0-9]+;/objectVersion = 60;/' "$PBX"
           sed -i '' -E 's/compatibilityVersion = \"Xcode [0-9.]+\";/compatibilityVersion = "Xcode 14.0";/' "$PBX"
           sed -i '' -E 's/LastUpgradeCheck = [0-9]+;/LastUpgradeCheck = 1540;/' "$PBX"
-          echo "---- after ----"
-          grep -E 'objectVersion|compatibilityVersion|LastUpgradeCheck' "$PBX" || true
           OBJ=$(grep -m1 'objectVersion' "$PBX" | tr -dc '0-9')
           echo "objectVersion=$OBJ"
           test "$OBJ" = "60"
@@ -64,20 +61,34 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             build
 
-      - name: Package tipa
+      - name: Package tipa with Music.entitlements
         run: |
           set -euo pipefail
           APP_PATH=$(find build/Build/Products -name 'Music.app' -type d | head -n1)
           echo "APP_PATH=$APP_PATH"
           test -n "$APP_PATH"
+          rm -rf Payload
           mkdir -p Payload
           cp -R "$APP_PATH" Payload/
-          if command -v ldid >/dev/null 2>&1; then
-            ldid -S Payload/Music.app || true
-          fi
+
+          ENT="$(pwd)/Music.entitlements"
+          test -f "$ENT"
+          echo "Using entitlements: $ENT"
+          # -S<path> embeds the plist into the code signature.
+          # Bare `ldid -S` writes an EMPTY entitlement set → sandboxed App under TrollStore.
+          ldid -S"$ENT" Payload/Music.app
+          echo "ldid sign exit=$?"
+
+          # Verify critical keys landed in the signature.
+          echo "---- embedded entitlements ----"
+          ldid -e Payload/Music.app | tee /tmp/embedded.plist
+          grep -q 'com.apple.Music' /tmp/embedded.plist
+          grep -q 'platform-application' /tmp/embedded.plist
+          grep -q 'no-sandbox' /tmp/embedded.plist
+          echo "entitlements OK"
+
           zip -qry Music.tipa Payload
           ls -la Music.tipa
-          unzip -l Music.tipa | head -n 40
 
       - name: Upload tipa artifact
         uses: actions/upload-artifact@v4

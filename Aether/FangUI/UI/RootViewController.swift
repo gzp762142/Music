@@ -21,6 +21,9 @@ final class RootViewController: UIViewController {
     private let brandSub = UILabel()
     private let themeSwitch = UISwitch()
     private let badgeLabel = UILabel()
+    /// 诊断行：实时显示窗口/面板/内容尺寸 + 构建标记，用来确认跑的是哪一版。
+    private let diagLabel = UILabel()
+    private var diagTick = 0
     private let scrollView = UIScrollView()
     private let contentContainer = UIView()
     private let navBar = UIView()
@@ -69,7 +72,7 @@ final class RootViewController: UIViewController {
         brandLabel.font = .systemFont(ofSize: 20, weight: .bold)
         brandLabel.text = "DsTool"
         brandSub.font = .systemFont(ofSize: 11, weight: .medium)
-        brandSub.text = "UI THEME KIT"
+        brandSub.text = "UI THEME KIT · v3"
         titleLabel.font = .systemFont(ofSize: 24, weight: .bold)
         titleLabel.text = tabTitles[0]
         titleLabel.adjustsFontSizeToFitWidth = true
@@ -81,6 +84,12 @@ final class RootViewController: UIViewController {
             $0.numberOfLines = 1
             $0.lineBreakMode = .byTruncatingTail
         }
+
+        diagLabel.font = .monospacedSystemFont(ofSize: 9, weight: .regular)
+        diagLabel.numberOfLines = 1
+        diagLabel.textAlignment = .center
+        diagLabel.alpha = 0.65
+        cardView.addSubview(diagLabel)
         badgeLabel.font = .systemFont(ofSize: 13, weight: .medium)
         badgeLabel.text = "  ● Ready  "
         badgeLabel.textAlignment = .center
@@ -238,10 +247,14 @@ final class RootViewController: UIViewController {
 
         // 内容区：宽度由约束链锁定，高度由页面内容撑开，滚动交给 UIScrollView。
         let contentTop = top + headerH
-        let contentBottom = navBar.frame.minY - 12
+        let contentBottom = navBar.frame.minY - 34
         scrollView.frame = CGRect(x: pad, y: contentTop,
                                   width: W - pad * 2,
                                   height: max(40, contentBottom - contentTop))
+
+        // 诊断行贴在导航条上方：窗口 / 面板 / 内容尺寸，用来确认版本与几何。
+        diagLabel.frame = CGRect(x: pad, y: navBar.frame.minY - 20,
+                                 width: W - pad * 2, height: 14)
     }
 
     private func layoutNav() {
@@ -346,6 +359,22 @@ final class RootViewController: UIViewController {
                 i == state.page ? p.accent : p.textDim
         }
         (pages[state.page] as? PageBuildable)?.rebuild(palette: p)
+
+        // 每半秒刷一次诊断行，避免每帧都做字符串格式化。
+        diagTick += 1
+        if diagTick % 30 == 1 {
+            diagLabel.textColor = p.textDim
+            let screen = UIScreen.main.bounds
+            diagLabel.text = String(
+                format: "win %.0f×%.0f · card %.0f×%.0f · page %.0f×%.0f · s0 %.0f×%.0f/%d · %@",
+                view.bounds.width, view.bounds.height,
+                cardView.bounds.width, cardView.bounds.height,
+                contentContainer.bounds.width, contentContainer.bounds.height,
+                pages[0].contentStack.bounds.width, pages[0].contentStack.bounds.height,
+                pages[0].contentStack.arrangedSubviews.count,
+                screen.width >= screen.height ? "landscape" : "portrait"
+            )
+        }
     }
 
     private func applyPalette(animated: Bool) {

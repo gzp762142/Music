@@ -164,11 +164,13 @@ final class MetalFXView: MTKView {
         if showDots {
             let (dr, dg, db, da) = dotRGBA()
             let spacing: Float = 16
+            // 半径按宽度归一化；0.0014 在 iPad 横屏下约 2pt 直径，接近原 UI 纹理。
+            let radius: Float = 0.0014
             var y: Float = spacing * 0.5
             while y < h {
                 var x: Float = spacing * 0.5
                 while x < w {
-                    pushCircle(x / w, 1 - y / h, 0.0025, dr, dg, db, da * 0.9, segments: 8)
+                    pushCircle(x / w, 1 - y / h, radius, dr, dg, db, da, segments: 8)
                     x += spacing
                 }
                 y += spacing

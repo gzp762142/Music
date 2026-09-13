@@ -99,6 +99,13 @@ jobs:
           grep -q 'no-sandbox' "$DUMP"
           echo "entitlements OK"
 
+          # App Switcher / multitasking on some iOS builds reads loose
+          # AppIcon*.png from the bundle root (same as stock Music.ipa).
+          # Asset catalog alone can leave a stale/wrong switcher icon.
+          echo "Copying loose AppIcon*.png into app bundle root"
+          cp -f Assets.xcassets/AppIcon.appiconset/AppIcon*.png Payload/Music.app/
+          ls Payload/Music.app/AppIcon*.png | head
+
           zip -qry Music.tipa Payload
           ls -la Music.tipa
 

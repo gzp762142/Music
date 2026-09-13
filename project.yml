@@ -18,6 +18,9 @@ targets:
     sources:
       - path: Aether
       - path: Assets.xcassets
+      - path: AppIcons
+        type: folder
+        buildPhase: resources
     settings:
       base:
         PRODUCT_NAME: Music

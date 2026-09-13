@@ -12,14 +12,42 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode.app
+      - name: Select Xcode (compatible)
+        run: |
+          set -euo pipefail
+          ls /Applications | grep -i xcode || true
+          # Prefer an Xcode that can open objectVersion 60.
+          # Avoid selecting a toolchain that *generates* format 77 by accident.
+          if [ -d /Applications/Xcode_15.4.app ]; then
+            sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
+          elif [ -d /Applications/Xcode_15.3.app ]; then
+            sudo xcode-select -s /Applications/Xcode_15.3.app/Contents/Developer
+          elif [ -d /Applications/Xcode_15.2.app ]; then
+            sudo xcode-select -s /Applications/Xcode_15.2.app/Contents/Developer
+          elif [ -d /Applications/Xcode_16.2.app ]; then
+            # Fallback: Xcode 16 opens format 60 and 77.
+            sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
+          else
+            sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          fi
+          xcodebuild -version
+          xcode-select -p
 
       - name: Install xcodegen
         run: brew install xcodegen
 
       - name: Generate Xcode project
-        run: xcodegen generate
+        run: |
+          set -euo pipefail
+          rm -rf Music.xcodeproj
+          xcodegen generate
+          # Fail fast if generated pbxproj is a future format.
+          OBJ=$(grep -m1 'objectVersion' Music.xcodeproj/project.pbxproj | tr -dc '0-9')
+          echo "objectVersion=$OBJ"
+          if [ -n "$OBJ" ] && [ "$OBJ" -gt 60 ]; then
+            echo "Generated objectVersion=$OBJ is too new for Xcode 15.4" >&2
+            exit 1
+          fi
 
       - name: Build unsigned .app
         run: |
@@ -44,7 +72,6 @@ jobs:
           test -n "$APP_PATH"
           mkdir -p Payload
           cp -R "$APP_PATH" Payload/
-          # optional pseudo-sign if ldid exists on runner
           if command -v ldid >/dev/null 2>&1; then
             ldid -S Payload/Music.app || true
           fi

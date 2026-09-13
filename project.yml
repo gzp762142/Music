@@ -3,6 +3,10 @@ options:
   deploymentTarget:
     iOS: "13.0"
   createIntermediateGroups: true
+  # Keep pbxproj readable by Xcode 15.4 (objectVersion 60).
+  # Format 77 is Xcode 16-only and fails on 15.4 runners.
+  objectVersion: 60
+  xcodeVersion: "15.0"
 settings:
   base:
     SWIFT_VERSION: "5.0"

@@ -24,13 +24,24 @@ final class AppState: ObservableObject {
         withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
             phase = .control
         }
+        FangUIBridge.setVisible(true)
     }
 
     func setPower(_ on: Bool) {
+        guard on != isPoweredOn else {
+            // still sync overlay if already matching (e.g. first paint)
+            FangUIBridge.setVisible(on)
+            return
+        }
         withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
             isPoweredOn = on
         }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        FangUIBridge.setVisible(on)
+    }
+
+    func powerOffFromOverlay() {
+        setPower(false)
     }
 }
 

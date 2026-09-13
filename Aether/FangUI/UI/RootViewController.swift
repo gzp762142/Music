@@ -3,22 +3,38 @@ import UIKit
 /// 根控制器：Metal 特效层 + 卡片 + 标题栏 + 分页内容 + 底部玻璃导航
 /// 架构对齐 Music 外挂：UIKit 做菜单，Metal 做背景/特效绘制
 final class RootViewController: UIViewController {
+    /// 面板底色回传：窗口层跟着换底，保证整块画面不透明。
+    var onSurfaceColorChange: ((UIColor) -> Void)?
+    /// 关闭（收起面板）回传。
+    var onRequestClose: (() -> Void)?
+
     private let state = FangUIState()
     private var palette = Palette.light
+    private var lastSurface: UIColor?
+
+    /// 窗口比卡片四周各留这么多，用于渲染卡片阴影。
+    static let shadowInset: CGFloat = 14
 
     private let fxView = MetalFXView(frame: .zero, device: MetalContext.shared.device)
+    private let cardShadow = UIView()
     private let cardView = UIView()
+    private let dragHandle = UIView()
+    private let closeBtn = UIButton(type: .system)
     private let titleLabel = UILabel()
     private let subtitleLabel = UILabel()
     private let brandLabel = UILabel()
     private let brandSub = UILabel()
     private let themeSwitch = UISwitch()
     private let badgeLabel = UILabel()
+    /// 诊断行：实时显示窗口/面板/内容尺寸 + 构建标记，用来确认跑的是哪一版。
+    private let diagLabel = UILabel()
+    private var diagTick = 0
+    private let scrollView = UIScrollView()
     private let contentContainer = UIView()
     private let navBar = UIView()
     private var navButtons: [UIButton] = []
     private let navIndicator = UIView()
-    private var pages: [UIView & PageBuildable] = []
+    private var pages: [UIView & PageSizing] = []
     private var displayLink: CADisplayLink?
     private var lastTs: CFTimeInterval = 0
 
@@ -29,35 +45,66 @@ final class RootViewController: UIViewController {
         "Palette & color controls",
         "Background FX & motion"
     ]
+    /// 底栏图标（SF Symbols，iOS 13 起可用）。
+    private let navIcons = ["square.grid.2x2", "slider.horizontal.3",
+                            "paintpalette.fill", "sparkles"]
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = palette.bg
+        view.backgroundColor = .clear
+        view.isOpaque = false
 
+        // 阴影层：窗口比卡片大一圈，阴影落在这里，不会被窗口裁掉。
+        cardShadow.layer.shadowColor = UIColor.black.cgColor
+        cardShadow.layer.shadowOpacity = 0.22
+        cardShadow.layer.shadowRadius = 14
+        cardShadow.layer.shadowOffset = CGSize(width: 0, height: 6)
+        view.addSubview(cardShadow)
+
+        // 卡片本体：圆角 + 裁剪 + 不透明底色，是画面上唯一的不透明面。
+        cardView.clipsToBounds = true
+        cardView.layer.cornerRadius = 22
+        cardShadow.addSubview(cardView)
+
+        // Metal 点阵 + 光束画在面板内部，作为 FangUI 自己的背景。
         fxView.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(fxView)
+        cardView.addSubview(fxView)
         NSLayoutConstraint.activate([
-            fxView.topAnchor.constraint(equalTo: view.topAnchor),
-            fxView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            fxView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            fxView.trailingAnchor.constraint(equalTo: view.trailingAnchor)
+            fxView.topAnchor.constraint(equalTo: cardView.topAnchor),
+            fxView.bottomAnchor.constraint(equalTo: cardView.bottomAnchor),
+            fxView.leadingAnchor.constraint(equalTo: cardView.leadingAnchor),
+            fxView.trailingAnchor.constraint(equalTo: cardView.trailingAnchor)
         ])
 
-        cardView.layer.cornerRadius = 22
-        cardView.layer.borderWidth = 1
-        cardView.clipsToBounds = true
-        view.addSubview(cardView)
+        closeBtn.setTitle("✕", for: .normal)
+        closeBtn.titleLabel?.font = .systemFont(ofSize: 15, weight: .semibold)
+        closeBtn.addTarget(self, action: #selector(onCloseTap), for: .touchUpInside)
+        cardView.addSubview(closeBtn)
 
         brandLabel.font = .systemFont(ofSize: 20, weight: .bold)
         brandLabel.text = "DsTool"
         brandSub.font = .systemFont(ofSize: 11, weight: .medium)
-        brandSub.text = "UI THEME KIT"
+        brandSub.text = "UI THEME KIT · v5"
         titleLabel.font = .systemFont(ofSize: 24, weight: .bold)
         titleLabel.text = tabTitles[0]
+        titleLabel.adjustsFontSizeToFitWidth = true
+        titleLabel.minimumScaleFactor = 0.7
         subtitleLabel.font = .systemFont(ofSize: 13)
         subtitleLabel.text = tabSubs[0]
+        // 顶栏文本一律单行：宽度异常时截断，不要逐字竖排
+        [brandLabel, brandSub, titleLabel, subtitleLabel, badgeLabel].forEach {
+            $0.numberOfLines = 1
+            $0.lineBreakMode = .byTruncatingTail
+        }
+
+        diagLabel.font = .monospacedSystemFont(ofSize: 9, weight: .regular)
+        diagLabel.numberOfLines = 1
+        diagLabel.textAlignment = .center
+        diagLabel.alpha = 0.65
+        cardView.addSubview(diagLabel)
         badgeLabel.font = .systemFont(ofSize: 13, weight: .medium)
         badgeLabel.text = "  ● Ready  "
+        badgeLabel.textAlignment = .center
         badgeLabel.layer.cornerRadius = 15
         badgeLabel.clipsToBounds = true
 
@@ -68,8 +115,22 @@ final class RootViewController: UIViewController {
             cardView.addSubview($0)
         }
 
+        scrollView.contentInsetAdjustmentBehavior = .never
+        scrollView.alwaysBounceVertical = true
+        scrollView.showsVerticalScrollIndicator = true
+        scrollView.clipsToBounds = true
+        cardView.addSubview(scrollView)
+
+        // 内容容器：宽度锁在滚动视口上，高度由最"高"的页面内容决定。
         contentContainer.translatesAutoresizingMaskIntoConstraints = false
-        cardView.addSubview(contentContainer)
+        scrollView.addSubview(contentContainer)
+        NSLayoutConstraint.activate([
+            contentContainer.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+            contentContainer.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+            contentContainer.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            contentContainer.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            contentContainer.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor)
+        ])
 
         pages = [
             OverviewPage(state: state),
@@ -84,6 +145,13 @@ final class RootViewController: UIViewController {
             p.translatesAutoresizingMaskIntoConstraints = false
             p.isHidden = true
             contentContainer.addSubview(p)
+            p.installContentStackConstraints()
+            NSLayoutConstraint.activate([
+                p.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
+                p.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
+                p.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+                p.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor)
+            ])
         }
         pages[0].isHidden = false
 
@@ -99,12 +167,28 @@ final class RootViewController: UIViewController {
         for (i, title) in tabTitles.enumerated() {
             let b = UIButton(type: .system)
             b.setTitle(title, for: .normal)
+            b.titleLabel?.font = .systemFont(ofSize: 11, weight: .regular)
+            b.titleEdgeInsets = UIEdgeInsets(top: 26, left: 0, bottom: 0, right: 0)
             b.tag = i
             b.addTarget(self, action: #selector(onTab(_:)), for: .touchUpInside)
             b.translatesAutoresizingMaskIntoConstraints = false
+
+            let icon = UIImageView(image: UIImage(systemName: navIcons[i]))
+            icon.contentMode = .scaleAspectFit
+            icon.isUserInteractionEnabled = false
+            icon.tag = 900 + i
+            b.addSubview(icon)
+
             navBar.addSubview(b)
             navButtons.append(b)
         }
+
+        // 顶栏左侧拖拽把手：按住可把卡片拖到屏幕任意位置。
+        dragHandle.backgroundColor = .clear
+        dragHandle.addGestureRecognizer(
+            UIPanGestureRecognizer(target: self, action: #selector(onDrag(_:)))
+        )
+        cardView.addSubview(dragHandle)
 
         applyPalette(animated: false)
         startDisplayLink()
@@ -112,46 +196,94 @@ final class RootViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        let inset: CGFloat = 24
-        let cardW = min(view.bounds.width - 48, 900)
-        let cardH = min(view.bounds.height - 48, 720)
-        cardView.frame = CGRect(
-            x: (view.bounds.width - cardW) / 2,
-            y: (view.bounds.height - cardH) / 2,
-            width: cardW, height: cardH
-        )
 
+        // 每轮布局都归位：任何方向旋转都在这里被抹掉。
+        if view.transform != .identity { view.transform = .identity }
+
+        // 卡片浮在窗口里，四周留出阴影边距。
+        cardShadow.frame = view.bounds.insetBy(dx: RootViewController.shadowInset,
+                                                dy: RootViewController.shadowInset)
+        cardView.frame = cardShadow.bounds
+
+        let W = cardView.bounds.width
+        let H = cardView.bounds.height
+        let top = view.safeAreaInsets.top
+        let bottom = view.safeAreaInsets.bottom
         let pad: CGFloat = 20
-        brandLabel.frame = CGRect(x: pad + 8, y: 18, width: 120, height: 24)
-        brandSub.frame = CGRect(x: pad + 8, y: 42, width: 120, height: 14)
-        titleLabel.sizeToFit()
-        titleLabel.frame = CGRect(x: 160, y: 22, width: titleLabel.bounds.width, height: 28)
-        subtitleLabel.frame = CGRect(x: titleLabel.frame.maxX + 12, y: 28,
-                                     width: 220, height: 18)
-        themeSwitch.frame = CGRect(x: cardView.bounds.width - 70, y: 22, width: 51, height: 31)
-        badgeLabel.sizeToFit()
-        badgeLabel.frame = CGRect(
-            x: cardView.bounds.width - badgeLabel.bounds.width - 16,
-            y: 20, width: badgeLabel.bounds.width, height: 30
-        )
-        badgeLabel.layer.cornerRadius = 15
+        let wide = W >= 620
+        let headerH: CGFloat = wide ? 72 : 104
 
+        // 右上角自右向左：关闭 → Ready 徽章 → 主题开关
+        let closeSide: CGFloat = 30
+        closeBtn.frame = CGRect(x: W - pad - closeSide,
+                                y: top + (wide ? 18 : 14),
+                                width: closeSide, height: closeSide)
+        closeBtn.layer.cornerRadius = closeSide / 2
+        themeSwitch.frame = CGRect(x: closeBtn.frame.minX - 12 - 51,
+                                   y: closeBtn.frame.midY - 15.5,
+                                   width: 51, height: 31)
+
+        badgeLabel.text = (badgeLabel.text ?? "").trimmingCharacters(in: .whitespaces)
+        badgeLabel.sizeToFit()
+        let badgeW = min(max(badgeLabel.bounds.width + 22, 86), W * 0.45)
+        let badgeH: CGFloat = 28
+        badgeLabel.layer.cornerRadius = badgeH / 2
+
+        titleLabel.sizeToFit()
+
+        if wide {
+            // 单行 header：品牌 | 标题 + 副标题 … 开关 · 徽章 · 关闭
+            brandLabel.frame = CGRect(x: pad + 8, y: top + 18, width: 160, height: 24)
+            brandSub.frame = CGRect(x: pad + 8, y: top + 42, width: 160, height: 14)
+            brandSub.isHidden = false
+            subtitleLabel.isHidden = false
+
+            titleLabel.frame = CGRect(x: 176, y: top + 20,
+                                      width: titleLabel.bounds.width, height: 30)
+            let subX = titleLabel.frame.maxX + 12
+            subtitleLabel.frame = CGRect(
+                x: subX, y: top + 27,
+                width: max(0, themeSwitch.frame.minX - 16 - subX), height: 18
+            )
+            badgeLabel.frame = CGRect(x: themeSwitch.frame.minX - 12 - badgeW,
+                                      y: top + 21, width: badgeW, height: badgeH)
+        } else {
+            // 窄屏两行 header：上行品牌 + 开关/关闭，下行标题 + 徽章
+            brandLabel.frame = CGRect(x: pad + 8, y: top + 14, width: 160, height: 26)
+            brandSub.isHidden = true
+            subtitleLabel.isHidden = true
+
+            titleLabel.frame = CGRect(x: pad + 8, y: top + 48,
+                                      width: min(titleLabel.bounds.width,
+                                                 W - pad * 2 - badgeW - 12),
+                                      height: 30)
+            badgeLabel.frame = CGRect(x: W - pad - badgeW, y: top + 50,
+                                      width: badgeW, height: badgeH)
+        }
+
+        // 底部玻璃导航
         let navH: CGFloat = 58
-        let navW = min(cardView.bounds.width - 40, 560)
-        navBar.frame = CGRect(
-            x: (cardView.bounds.width - navW) / 2,
-            y: cardView.bounds.height - navH - 16,
-            width: navW, height: navH
-        )
+        let navW = min(W - 40, 560)
+        navBar.frame = CGRect(x: (W - navW) / 2,
+                              y: H - navH - 16 - bottom,
+                              width: navW, height: navH)
         layoutNav()
 
-        contentContainer.frame = CGRect(
-            x: inset, y: 72,
-            width: cardView.bounds.width - inset * 2,
-            height: navBar.frame.minY - 72 - 12
-        )
-        pages.forEach { $0.frame = contentContainer.bounds }
-        _ = inset
+        // 内容区：宽度由约束链锁定，高度由页面内容撑开，滚动交给 UIScrollView。
+        let contentTop = top + headerH
+        let contentBottom = navBar.frame.minY - 34
+        scrollView.frame = CGRect(x: pad, y: contentTop,
+                                  width: W - pad * 2,
+                                  height: max(40, contentBottom - contentTop))
+
+        // 诊断行贴在导航条上方：窗口 / 面板 / 内容尺寸，用来确认版本与几何。
+        diagLabel.frame = CGRect(x: pad, y: navBar.frame.minY - 20,
+                                 width: W - pad * 2, height: 14)
+
+        // 拖拽把手覆盖顶栏左侧品牌区，右侧的开关 / 徽章 / 关闭不受影响。
+        dragHandle.frame = CGRect(x: 0, y: 0,
+                                  width: min(W * 0.45, 220),
+                                  height: top + headerH)
     }
 
     private func layoutNav() {
@@ -160,7 +292,15 @@ final class RootViewController: UIViewController {
         for (i, b) in navButtons.enumerated() {
             b.frame = CGRect(x: CGFloat(i) * cellW, y: 0, width: cellW, height: navBar.bounds.height)
             b.setTitleColor(i == state.page ? palette.accent : palette.textDim, for: .normal)
-            b.titleLabel?.font = .systemFont(ofSize: 13, weight: i == state.page ? .semibold : .regular)
+            b.titleLabel?.font = .systemFont(ofSize: 11, weight: i == state.page ? .semibold : .regular)
+            b.titleEdgeInsets = UIEdgeInsets(top: 26, left: 0, bottom: 0, right: 0)
+            if let icon = b.viewWithTag(900 + i) {
+                let side: CGFloat = 20
+                icon.frame = CGRect(x: (b.bounds.width - side) / 2, y: 8,
+                                    width: side, height: side)
+                (icon as? UIImageView)?.tintColor =
+                    i == state.page ? palette.accent : palette.textDim
+            }
         }
         updateIndicator(animated: false)
     }
@@ -222,11 +362,16 @@ final class RootViewController: UIViewController {
         // 主题色连续刷
         let p = Palette.lerp(state.themeT)
         palette = p
-        view.backgroundColor = p.bg
-        cardView.backgroundColor = p.card
-        cardView.layer.borderColor = p.cardBorder.cgColor
+        view.backgroundColor = .clear
+        cardView.backgroundColor = p.bg
         navBar.backgroundColor = p.navBar
         navIndicator.backgroundColor = p.accent
+        closeBtn.backgroundColor = p.accentSoft
+        closeBtn.setTitleColor(p.text, for: .normal)
+        if lastSurface?.isEqual(p.bg) != true {
+            lastSurface = p.bg
+            onSurfaceColorChange?(p.bg)
+        }
         fxView.accent = p.accent
         fxView.dotColor = p.dotGrid
         fxView.showBeams = state.showBeams
@@ -239,17 +384,38 @@ final class RootViewController: UIViewController {
         badgeLabel.textColor = p.text
         navButtons.enumerated().forEach { i, b in
             b.setTitleColor(i == state.page ? p.accent : p.textDim, for: .normal)
+            (b.viewWithTag(900 + i) as? UIImageView)?.tintColor =
+                i == state.page ? p.accent : p.textDim
         }
         (pages[state.page] as? PageBuildable)?.rebuild(palette: p)
+
+        // 每半秒刷一次诊断行，避免每帧都做字符串格式化。
+        diagTick += 1
+        if diagTick % 30 == 1 {
+            diagLabel.textColor = p.textDim
+            let screen = UIScreen.main.bounds
+            diagLabel.text = String(
+                format: "win %.0f×%.0f · card %.0f×%.0f · tf %.2f/%.2f · %@",
+                view.bounds.width, view.bounds.height,
+                cardView.bounds.width, cardView.bounds.height,
+                view.transform.a, view.transform.b,
+                screen.width >= screen.height ? "landscape" : "portrait"
+            )
+        }
     }
 
     private func applyPalette(animated: Bool) {
         let p = Palette.lerp(state.themeT)
         palette = p
-        view.backgroundColor = p.bg
-        cardView.backgroundColor = p.card
-        cardView.layer.borderColor = p.cardBorder.cgColor
-        navBar.backgroundColor = p.navBar.withAlphaComponent(0.7)
+        view.backgroundColor = .clear
+        cardView.backgroundColor = p.bg
+        navBar.backgroundColor = p.navBar
+        closeBtn.backgroundColor = p.accentSoft
+        closeBtn.setTitleColor(p.text, for: .normal)
+        if lastSurface?.isEqual(p.bg) != true {
+            lastSurface = p.bg
+            onSurfaceColorChange?(p.bg)
+        }
         navBar.layer.shadowColor = UIColor.black.cgColor
         navBar.layer.shadowOpacity = 0.12
         navBar.layer.shadowRadius = 12
@@ -273,8 +439,25 @@ final class RootViewController: UIViewController {
         state.page = sender.tag
         pages.forEach { $0.isHidden = ($0 !== pages[sender.tag]) }
         pages[sender.tag].rebuild(palette: palette)
+        scrollView.setContentOffset(.zero, animated: false)
+        view.setNeedsLayout()
         UIView.transition(with: contentContainer, duration: 0.2,
                           options: .transitionCrossDissolve, animations: nil)
+    }
+
+    @objc private func onCloseTap() {
+        onRequestClose?()
+    }
+
+    /// 拖拽把手：把悬浮窗口搬到新位置（坐标写回 Bridge，心跳重设几何时沿用）。
+    @objc private func onDrag(_ g: UIPanGestureRecognizer) {
+        guard let win = view.window, let superview = win.superview else { return }
+        let t = g.translation(in: superview)
+        g.setTranslation(.zero, in: superview)
+        var frame = win.frame
+        frame.origin.x += t.x
+        frame.origin.y += t.y
+        FangUIBridge.setPanelFrame(frame)
     }
 
     deinit {

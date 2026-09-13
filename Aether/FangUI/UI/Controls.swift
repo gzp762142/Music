@@ -75,8 +75,10 @@ final class ToggleSwitch: UIControl {
     override func layoutSubviews() {
         super.layoutSubviews()
         apply(progress: progress)
-        track.backgroundColor = track.backgroundColor
     }
+
+    /// 让 stack 里的行高稳定（无固有尺寸的控件会被压成 0 高）。
+    override var intrinsicContentSize: CGSize { CGSize(width: 46, height: 26) }
 }
 
 /// 对应 CheckChip：圆角勾选块
@@ -115,6 +117,9 @@ final class CheckChip: UIControl {
         backgroundColor = isOn ? palette.accent : palette.track
         setNeedsDisplay()
     }
+
+    /// 行内固定尺寸，避免被 stack 压成 0 高。
+    override var intrinsicContentSize: CGSize { CGSize(width: 40, height: 26) }
 
     override func draw(_ rect: CGRect) {
         let c = UIGraphicsGetCurrentContext()
@@ -221,6 +226,11 @@ final class FancySlider: UIControl {
         sendActions(for: .valueChanged)
     }
 
+    /// 滑条需要固定高度：气泡 24 + 间隙 + 轨道。
+    override var intrinsicContentSize: CGSize {
+        CGSize(width: UIView.noIntrinsicMetric, height: 54)
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
         let trackY = bounds.height - 10
@@ -260,6 +270,8 @@ final class RowView: UIView {
         super.init(frame: .zero)
         label.text = title
         label.font = .systemFont(ofSize: 15)
+        label.numberOfLines = 1
+        label.lineBreakMode = .byTruncatingTail
         addSubview(label)
         addSubview(control)
     }
@@ -273,15 +285,22 @@ final class RowView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         label.sizeToFit()
-        label.frame = CGRect(x: 0, y: (bounds.height - label.bounds.height) / 2,
-                             width: min(label.bounds.width, bounds.width - 80), height: label.bounds.height)
-        let cw = control.bounds.width > 0 ? control.bounds.width : 46
-        let ch = control.bounds.height > 0 ? control.bounds.height : 26
-        control.frame = CGRect(x: bounds.width - cw, y: (bounds.height - ch) / 2, width: cw, height: ch)
+        let h = min(label.bounds.height, bounds.height)
+        label.frame = CGRect(x: 0, y: (bounds.height - h) / 2,
+                             width: min(label.bounds.width, max(bounds.width - 80, 0)),
+                             height: h)
+
+        let intrinsic = control.intrinsicContentSize
+        let cw = intrinsic.width != UIView.noIntrinsicMetric
+            ? intrinsic.width : max(control.bounds.width, 46)
+        let ch = intrinsic.height != UIView.noIntrinsicMetric
+            ? intrinsic.height : max(control.bounds.height, 26)
+        control.frame = CGRect(x: bounds.width - cw, y: (bounds.height - ch) / 2,
+                               width: cw, height: ch)
     }
 
     override var intrinsicContentSize: CGSize {
-        CGSize(width: UIView.noIntrinsicMetric, height: 40)
+        CGSize(width: UIView.noIntrinsicMetric, height: 44)
     }
 }
 
@@ -290,6 +309,9 @@ final class SectionLabel: UILabel {
     override init(frame: CGRect) {
         super.init(frame: frame)
         font = .systemFont(ofSize: 12, weight: .semibold)
+        // 单行：宽度异常时宁可截断，也不要逐字竖排
+        numberOfLines = 1
+        lineBreakMode = .byTruncatingTail
     }
 
     required init?(coder: NSCoder) { super.init(coder: coder) }

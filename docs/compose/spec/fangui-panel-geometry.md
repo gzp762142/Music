@@ -41,6 +41,13 @@ S1.4 的根因在复核与实机录屏对照后确认：`hide()` 把窗口置 ni
 - **拖动**：存 **中心点**（窗口带变换时 `frame` 是包围盒，会漂）。
 - **诊断**：诊断行显示 `sp / screen / win / 当前档位`，用于实机定位。
 
+- **逻辑开关**：窗口长期存在后，必须另设 `isOpen`。生命周期通知/注册重试/心跳
+  全部以它为门，否则「已收起」的菜单会被前台事件重新亮出来并抢 key。
+- **收起要 flush**：关闭多发生在 App 已退后台时，`isHidden` 后补一次
+  `CATransaction.flush()`，确保隐藏状态赶在挂起前进入 CA。
+- **面板停表**：`CADisplayLink(target: self)` 会强引用控制器，`deinit` 里的
+  `invalidate()` 永远执行不到。改用弱代理，并由宿主在收起时显式 `setActive(false)`。
+
 ## [S3] Out of Scope
 
 - 不改 identity（Bundle / entitlements / 图标）。
@@ -52,4 +59,5 @@ S1.4 的根因在复核与实机录屏对照后确认：`hide()` 把窗口置 ni
 - [x] T2: `PanelOrientation` 9 档 + 长按循环 + 持久化 — acceptance: 长按依次切换，诊断行显示档位，重启保留 (covers: S2)
 - [x] T3: 面板视图单实例（`attachPanel` / `hide`） — acceptance: 反复开关后窗口内只有一份面板视图 (covers: S2)
 - [x] T5: 窗口单例 + 注册幂等 — acceptance: 反复开关、切前后台后屏幕上只出现一份面板，无重影 (covers: S1.4, S2; depends: T3)
-- [ ] T4: 推 CI 出包并在 iPad 上确认 — acceptance: CI 绿；装包后 4 项现象全部消失 (covers: S1; depends: T1, T2, T3, T5)
+- [x] T6: `isOpen` 门控 + `hide` flush + displayLink 弱代理 — acceptance: 收起后前后台切换不会重新亮出菜单；收起后不再 60fps 空转 (covers: S2; depends: T5)
+- [ ] T4: 推 CI 出包并在 iPad 上确认 — acceptance: CI 绿；装包后 4 项现象全部消失 (covers: S1; depends: T1, T2, T3, T5, T6)

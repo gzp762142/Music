@@ -61,8 +61,18 @@ enum FangUIBridge {
         applySceneGeometry(w)
     }
 
+    /// 注册给 SpringBoard 的层级：系统级，浮在所有 App 之上。
     /// TrollEngine SHMainWnd: UIWindowLevelStatusBar + 2000
     private static let levelSystem = UIWindow.Level(rawValue: UIWindow.Level.statusBar.rawValue + 2000)
+
+    /// **本地**窗口层级：压到 App 主窗口之下。
+    ///
+    /// 关键发现（实测）：窗口交给 SpringBoard 托管后，它会自己再合成一份，
+    /// 于是「App 内看到两份、退出 App 只剩一份」。
+    /// 两份的朝向也不同——我们给窗口加的补偿只让**托管那份**变正，
+    /// 本地那份反而被转掉。既然托管那份既正确又能跨 App 显示，
+    /// 就让本地的这份藏到 App 不透明底之下，屏幕上只留托管那一份。
+    private static let levelLocal = UIWindow.Level(rawValue: -1)
 
     static var isVisible: Bool {
         guard isOpen, let w = window else { return false }
@@ -106,16 +116,17 @@ enum FangUIBridge {
             attachPanel(to: w)
         }
         applySceneGeometry(w)
+        // 只让 SpringBoard 托管那份可见：本地窗口保持低位、不抢 key。
+        w.windowLevel = levelLocal
         w.isHidden = false
         w.alpha = 1
-        if !w.isKeyWindow { w.makeKeyAndVisible() }
         applySceneGeometry(w)
         startKeepAlive()
     }
 
     private static func makeWindow() -> FangUIOverlayWindow {
         let w = FangUIOverlayWindow(frame: .zero)
-        w.windowLevel = levelSystem
+        w.windowLevel = levelLocal
         // 窗口只覆盖卡片本身（含阴影边距）：卡片不透明，
         // 卡片之外透出桌面或下层 app —— 这才是外挂悬浮菜单的形态。
         w.backgroundColor = .clear
@@ -128,9 +139,9 @@ enum FangUIBridge {
                 w.windowScene = scene
             }
         }
-        // Force context into CA so _contextId is non-zero, then register once.
+        // 让 layer 进 CA，拿到非零 _contextId 后才好注册托管。
+        // 刻意不 makeKeyAndVisible：避免抢走 App 主窗口的 key。
         w.isHidden = false
-        w.makeKeyAndVisible()
         CATransaction.flush()
         registerWithSpringBoard(w)
         return w
@@ -180,7 +191,8 @@ enum FangUIBridge {
     private static func registerWithSpringBoard(_ w: UIWindow) {
         guard isOpen, hostingEnabled else { return }
         if registeredContextWindow === w { return }
-        let ok = FangUISBSHosting.shared().register(w, atLevel: Double(w.windowLevel.rawValue))
+        // 关键：注册用的是**系统级**层级，与窗口自身的本地层级无关。
+        let ok = FangUISBSHosting.shared().register(w, atLevel: Double(levelSystem.rawValue))
         if ok {
             registeredContextWindow = w
             return
@@ -189,7 +201,7 @@ enum FangUIBridge {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             // 期间可能已收起：不要再给一个关掉的窗口注册。
             guard isOpen, registeredContextWindow !== w else { return }
-            if FangUISBSHosting.shared().register(w, atLevel: Double(w.windowLevel.rawValue)) {
+            if FangUISBSHosting.shared().register(w, atLevel: Double(levelSystem.rawValue)) {
                 registeredContextWindow = w
             }
         }
@@ -198,22 +210,13 @@ enum FangUIBridge {
     private static func reassert(_ w: UIWindow) {
         // 菜单处于收起状态时，生命周期通知不该把它重新亮出来（也不该抢 key）。
         guard isOpen else { return }
-        let bg = UIApplication.shared.applicationState == .background
-            || UIApplication.shared.applicationState == .inactive
         applySceneGeometry(w)
+        // 本地层级始终压在 App 之下；可见性交给 SpringBoard 那份。
+        w.windowLevel = levelLocal
         w.isHidden = false
         w.alpha = 1
-        // Keep system level; never drop below statusBar+1000 (SHMainWnd rule).
-        if w.windowLevel.rawValue < UIWindow.Level.statusBar.rawValue + 1000 {
-            w.windowLevel = levelSystem
-        }
-        if bg {
-            if w.isKeyWindow { w.resignKey() }
-            // 注册已在窗口创建时完成；这里只在丢失后补一次。
-            registerWithSpringBoard(w)
-        } else if !w.isKeyWindow {
-            w.makeKeyAndVisible()
-        }
+        // 注册已在窗口创建时完成；这里只在丢失后补一次。
+        registerWithSpringBoard(w)
     }
 
     /// 面板 ＝ 一块悬浮卡片：窗口只覆盖卡片（加上阴影边距）。
@@ -243,7 +246,8 @@ enum FangUIBridge {
         if let saved = customCenter {
             center = saved
         } else {
-            center = CGPoint(x: space.midX, y: space.midY - space.height * 0.06)
+            // 默认正居中。
+            center = CGPoint(x: space.midX, y: space.midY)
         }
         center.x = min(max(center.x, halfW), max(halfW, space.width - halfW))
         center.y = min(max(center.y, halfH), max(halfH, space.height - halfH))
@@ -310,6 +314,7 @@ enum FangUIBridge {
         let space = layoutSpace()
         let count = overlayWindowCount()
         let sbs = registeredContextWindow != nil ? "Y" : "N"
+        let lv = Int(window?.windowLevel.rawValue ?? 0)
         let ori: String
         switch currentOrientation() {
         case .landscapeLeft: ori = "L"
@@ -317,8 +322,8 @@ enum FangUIBridge {
         case .portraitUpsideDown: ori = "U"
         default: ori = "P"
         }
-        return String(format: "#w%d sbs%@ ori%@ %@ · sp %.0f×%.0f · sc %.0f×%.0f · win %.0f×%.0f",
-                      count, sbs, ori,
+        return String(format: "#w%d sbs%@ lv%d ori%@ %@ · sp %.0f×%.0f · sc %.0f×%.0f · win %.0f×%.0f",
+                      count, sbs, lv, ori,
                       PanelOrientation.describe(),
                       space.width, space.height,
                       sceneSize.width, sceneSize.height,
@@ -383,10 +388,12 @@ enum FangUIBridge {
                 keepAlive = nil
                 return
             }
-            if w.isHidden || w.windowLevel.rawValue < UIWindow.Level.statusBar.rawValue + 1000 {
+            guard isOpen else { return }
+            if w.isHidden {
                 reassert(w)
             } else {
-                // Orientation can flip while menu is up (iPad rotate).
+                // 方向可能随设备变化；本地层级保持压在 App 之下。
+                if w.windowLevel != levelLocal { w.windowLevel = levelLocal }
                 applySceneGeometry(w)
             }
         }

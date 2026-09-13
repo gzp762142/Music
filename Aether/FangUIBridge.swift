@@ -46,31 +46,32 @@ enum FangUIBridge {
         installLifecycleObserversIfNeeded()
 
         if let w = window {
+            applySceneGeometry(w)
             reassert(w)
             registerWithSpringBoard(w)
             startKeepAlive()
             return
         }
 
-        let w = FangUIOverlayWindow(frame: UIScreen.main.bounds)
+        let w = FangUIOverlayWindow(frame: .zero)
         w.windowLevel = levelSystem
         w.backgroundColor = .clear
         w.isOpaque = false
-        w.transform = .identity
         w.rootViewController = FangUIContentHost(onRequestPowerOff: { onPowerOff?(false) })
 
         if #available(iOS 13.0, *) {
             if let scene = preferredWindowScene() {
                 w.windowScene = scene
-                w.frame = scene.coordinateSpace.bounds
             }
         }
-        // Keep landscape-capable card upright on iPad.
-        w.transform = .identity
+        // Portrait bounds + landscape SpringBoard = 90° rotated text. Always
+        // rebuild frame from interface orientation, keep transform identity.
+        applySceneGeometry(w)
 
         w.isHidden = false
         w.alpha = 1
         w.makeKeyAndVisible()
+        applySceneGeometry(w)
 
         // Force context into CA so _contextId is non-zero, then register.
         CATransaction.flush()
@@ -111,6 +112,7 @@ enum FangUIBridge {
     private static func reassert(_ w: UIWindow) {
         let bg = UIApplication.shared.applicationState == .background
             || UIApplication.shared.applicationState == .inactive
+        applySceneGeometry(w)
         w.isHidden = false
         w.alpha = 1
         // Keep system level; never drop below statusBar+1000 (SHMainWnd rule).
@@ -126,6 +128,38 @@ enum FangUIBridge {
         }
     }
 
+    /// Rebuild window frame so content is upright on iPad (landscape SpringBoard
+    /// + portrait UIScreen.main.bounds is what rotated the menu 90°).
+    private static func applySceneGeometry(_ w: UIWindow) {
+        w.transform = .identity
+
+        var size = UIScreen.main.bounds.size
+
+        if #available(iOS 13.0, *) {
+            let scene = w.windowScene ?? preferredWindowScene()
+            if let scene = scene {
+                let screen = UIScreen.main.bounds.size
+                let longSide = max(screen.width, screen.height)
+                let shortSide = min(screen.width, screen.height)
+                switch scene.interfaceOrientation {
+                case .landscapeLeft, .landscapeRight:
+                    size = CGSize(width: longSide, height: shortSide)
+                case .portrait, .portraitUpsideDown:
+                    size = CGSize(width: shortSide, height: longSide)
+                default:
+                    // Fall back to scene coordinate space
+                    let cs = scene.coordinateSpace.bounds.size
+                    if cs.width > 0 && cs.height > 0 { size = cs }
+                }
+            }
+        }
+
+        w.bounds = CGRect(origin: .zero, size: size)
+        w.center = CGPoint(x: size.width / 2, y: size.height / 2)
+        w.setNeedsLayout()
+        w.layoutIfNeeded()
+    }
+
     // MARK: Keep-alive
 
     private static func startKeepAlive() {
@@ -138,6 +172,9 @@ enum FangUIBridge {
             }
             if w.isHidden || w.windowLevel.rawValue < UIWindow.Level.statusBar.rawValue + 1000 {
                 reassert(w)
+            } else {
+                // Orientation can flip while menu is up (iPad rotate).
+                applySceneGeometry(w)
             }
         }
         RunLoop.main.add(keepAlive!, forMode: .common)

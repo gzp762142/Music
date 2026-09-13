@@ -30,6 +30,10 @@ enum FangUIBridge {
     /// 已向 SpringBoard 注册过的窗口：同一个窗口只注册一次。
     private static weak var registeredContextWindow: UIWindow?
 
+    /// 菜单是否处于「已开启」。窗口现在是长期存在的，
+    /// 所以必须另有一个逻辑开关，否则生命周期通知会把它重新亮出来。
+    private static var isOpen = false
+
     /// 拖动把手回调：把面板搬到新位置并记住。
     static func setPanelCenter(_ center: CGPoint) {
         customCenter = center
@@ -41,7 +45,7 @@ enum FangUIBridge {
     private static let levelSystem = UIWindow.Level(rawValue: UIWindow.Level.statusBar.rawValue + 2000)
 
     static var isVisible: Bool {
-        guard let w = window else { return false }
+        guard isOpen, let w = window else { return false }
         return !w.isHidden && w.alpha > 0.01
     }
 
@@ -72,6 +76,12 @@ enum FangUIBridge {
             window = w
         }
 
+        // 首次 show 时可能还没拿到 scene；每次 show 补绑一次，否则窗口永远不入场景。
+        if #available(iOS 13.0, *), w.windowScene == nil {
+            if let scene = preferredWindowScene() { w.windowScene = scene }
+        }
+
+        isOpen = true
         if panel == nil || panel?.view.superview !== w {
             attachPanel(to: w)
         }
@@ -120,6 +130,7 @@ enum FangUIBridge {
     }
 
     private static func hide() {
+        isOpen = false
         keepAlive?.invalidate()
         keepAlive = nil
         FangUIOrientationBridge.stopObserving()
@@ -130,6 +141,8 @@ enum FangUIBridge {
         guard let w = window else { return }
         w.isHidden = true
         w.alpha = 0
+        // 关闭多发生在 App 已退到后台时；不 flush 的话隐藏标志可能赶不上挂起。
+        CATransaction.flush()
         if w.isKeyWindow {
             if let appWin = UIApplication.shared.windows.first(where: { $0 !== w && !$0.isHidden }) {
                 appWin.makeKey()
@@ -143,6 +156,7 @@ enum FangUIBridge {
     /// 只对一个窗口的 contextID 注册一次：同一个窗口重复调用没有意义，
     /// 反而给 SpringBoard 制造重复托管的机会。
     private static func registerWithSpringBoard(_ w: UIWindow) {
+        guard isOpen else { return }
         if registeredContextWindow === w { return }
         let ok = FangUISBSHosting.shared().register(w, atLevel: Double(w.windowLevel.rawValue))
         if ok {
@@ -151,7 +165,8 @@ enum FangUIBridge {
         }
         // Retry once after the window is fully in the hierarchy.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            guard registeredContextWindow !== w else { return }
+            // 期间可能已收起：不要再给一个关掉的窗口注册。
+            guard isOpen, registeredContextWindow !== w else { return }
             if FangUISBSHosting.shared().register(w, atLevel: Double(w.windowLevel.rawValue)) {
                 registeredContextWindow = w
             }
@@ -159,6 +174,8 @@ enum FangUIBridge {
     }
 
     private static func reassert(_ w: UIWindow) {
+        // 菜单处于收起状态时，生命周期通知不该把它重新亮出来（也不该抢 key）。
+        guard isOpen else { return }
         let bg = UIApplication.shared.applicationState == .background
             || UIApplication.shared.applicationState == .inactive
         applySceneGeometry(w)

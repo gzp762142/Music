@@ -36,6 +36,7 @@ final class RootViewController: UIViewController {
     private let navIndicator = UIView()
     private var pages: [UIView & PageSizing] = []
     private var displayLink: CADisplayLink?
+    private var linkTarget: WeakDisplayLinkTarget?
     private var lastTs: CFTimeInterval = 0
 
     private let tabTitles = ["Overview", "Controls", "Colors", "Effects"]
@@ -330,13 +331,27 @@ final class RootViewController: UIViewController {
     }
 
     private func startDisplayLink() {
+        guard displayLink == nil else { return }
         lastTs = CACurrentMediaTime()
-        let link = CADisplayLink(target: self, selector: #selector(tick))
+        let proxy = linkTarget ?? WeakDisplayLinkTarget(self)
+        linkTarget = proxy
+        let link = CADisplayLink(target: proxy, selector: #selector(WeakDisplayLinkTarget.tick(_:)))
         link.add(to: .main, forMode: .common)
         displayLink = link
     }
 
-    @objc private func tick() {
+    /// 面板被摘出窗口（收起）时停掉定时器，避免离屏继续 60fps 空转。
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window == nil {
+            displayLink?.invalidate()
+            displayLink = nil
+        } else {
+            startDisplayLink()
+        }
+    }
+
+    @objc fileprivate func tick() {
         let now = CACurrentMediaTime()
         var dt = CGFloat(now - lastTs)
         lastTs = now
@@ -471,5 +486,19 @@ final class RootViewController: UIViewController {
 
     deinit {
         displayLink?.invalidate()
+    }
+}
+
+/// `CADisplayLink(target:)` 会强引用 target，`deinit { invalidate() }` 因此永远跑不到。
+/// 用弱代理打破这个环，收起面板后控制器才能正常释放。
+private final class WeakDisplayLinkTarget {
+    weak var target: RootViewController?
+
+    init(_ target: RootViewController) {
+        self.target = target
+    }
+
+    @objc func tick(_ link: CADisplayLink) {
+        target?.tick()
     }
 }

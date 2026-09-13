@@ -14,53 +14,70 @@ struct LoadingView: View {
     private let pulseDuration: Double = 3.8
 
     var body: some View {
-        ZStack {
-            VStack(spacing: 0) {
-                Text("Music")
-                    .font(.system(size: 12, weight: .semibold))
-                    .tracking(6)
-                    .foregroundColor(Color(.tertiaryLabel))
-                    .padding(.top, 24)
-
-                Spacer()
-
-                ZStack {
-                    RoseCurveTrack()
-                        .stroke(
-                            Color.primary.opacity(0.06),
-                            style: StrokeStyle(lineWidth: 3.5, lineCap: .round)
-                        )
-
-                    RoseCurve(progress: progress, detailScale: detailScale)
-                        .stroke(
-                            finished ? Color.green : Color.primary,
-                            style: StrokeStyle(lineWidth: 5.5, lineCap: .round, lineJoin: .round)
-                        )
-                        .opacity(0.08 + progress * 0.1)
-                        .rotationEffect(rotation)
-                        .shadow(
-                            color: finished ? Color.green.opacity(0.35) : .clear,
-                            radius: 12
-                        )
-
-                    VStack(spacing: 6) {
-                        Text("\(Int((progress * 100).rounded()))")
-                            .font(.system(size: 40, weight: .semibold, design: .rounded))
-                            .foregroundColor(finished ? Color.green : Color.primary)
-                            .scaleEffect(finished ? 1.06 : 1)
-
-                        Text("Loading")
-                            .font(.system(size: 12, weight: .medium))
-                            .tracking(2)
-                            .foregroundColor(Color(.tertiaryLabel))
-                            .opacity(finished ? 0 : 1)
-                    }
+        GeometryReader { geo in
+            ZStack {
+                // Title pinned to top, centered horizontally
+                VStack {
+                    Text("Music")
+                        .font(.system(size: 12, weight: .semibold))
+                        .tracking(6)
+                        .foregroundColor(Color(.tertiaryLabel))
+                        .padding(.top, max(24, geo.safeAreaInsets.top + 12))
+                    Spacer(minLength: 0)
                 }
-                .frame(width: 260, height: 260)
-                .padding(.bottom, 40)
+                .frame(width: geo.size.width)
+
+                // Rose curve true center (iPhone + iPad)
+                roseDial
+                    .frame(width: roseSize(for: geo.size), height: roseSize(for: geo.size))
+                    .position(x: geo.size.width / 2, y: geo.size.height / 2)
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
+        }
+        .edgesIgnoringSafeArea(.all)
+        .onAppear(perform: start)
+    }
+
+    private func roseSize(for size: CGSize) -> CGFloat {
+        let side = min(size.width, size.height)
+        // 260pt on phone-sized; scale down slightly on narrow/short layouts
+        return min(260, side * 0.58)
+    }
+
+    private var roseDial: some View {
+        ZStack {
+            RoseCurveTrack()
+                .stroke(
+                    Color.primary.opacity(0.06),
+                    style: StrokeStyle(lineWidth: 3.5, lineCap: .round)
+                )
+
+            RoseCurve(progress: progress, detailScale: detailScale)
+                .stroke(
+                    finished ? Color.green : Color.primary,
+                    style: StrokeStyle(lineWidth: 5.5, lineCap: .round, lineJoin: .round)
+                )
+                .opacity(0.08 + progress * 0.1)
+                .rotationEffect(rotation)
+                .shadow(
+                    color: finished ? Color.green.opacity(0.35) : .clear,
+                    radius: 12
+                )
+
+            VStack(spacing: 6) {
+                Text("\(Int((progress * 100).rounded()))")
+                    .font(.system(size: 40, weight: .semibold, design: .rounded))
+                    .foregroundColor(finished ? Color.green : Color.primary)
+                    .scaleEffect(finished ? 1.06 : 1)
+
+                Text("Loading")
+                    .font(.system(size: 12, weight: .medium))
+                    .tracking(2)
+                    .foregroundColor(Color(.tertiaryLabel))
+                    .opacity(finished ? 0 : 1)
             }
         }
-        .onAppear(perform: start)
+        .aspectRatio(1, contentMode: .fit)
     }
 
     private func start() {

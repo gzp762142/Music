@@ -2,6 +2,8 @@
 #import <objc/runtime.h>
 
 static id gObserver = nil;
+static NSInteger gCachedOrientation = 0;
+static BOOL gHasCache = NO;
 
 @implementation FangUIOrientationBridge
 
@@ -45,6 +47,8 @@ static id gObserver = nil;
                 }
 
                 dispatch_async(dispatch_get_main_queue(), ^{
+                    gCachedOrientation = orientation;
+                    gHasCache = YES;
                     handler(orientation, duration);
                 });
             };
@@ -80,6 +84,8 @@ static id gObserver = nil;
 }
 
 + (void)stopObserving {
+    gHasCache = NO;
+    gCachedOrientation = 0;
     if (gObserver) {
         SEL inv = NSSelectorFromString(@"invalidate");
         if ([gObserver respondsToSelector:inv]) {
@@ -94,6 +100,11 @@ static id gObserver = nil;
 }
 
 + (NSInteger)activeOrientation {
+    // 缓存优先：布局每 0.4s 查一次，不能每次都 new 一个 observer。
+    if (gHasCache && gCachedOrientation > 0) {
+        return gCachedOrientation;
+    }
+
     Class cls = objc_getClass("FBSOrientationObserver");
     if (cls) {
         id obs = [[cls alloc] init];
@@ -103,7 +114,11 @@ static id gObserver = nil;
 #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
             long long v = (long long)[obs performSelector:sel];
 #pragma clang diagnostic pop
-            if (v > 0) { return (NSInteger)v; }
+            if (v > 0) {
+                gCachedOrientation = (NSInteger)v;
+                gHasCache = YES;
+                return gCachedOrientation;
+            }
         }
     }
 
@@ -112,7 +127,12 @@ static id gObserver = nil;
             if ([scene isKindOfClass:[UIWindowScene class]]) {
                 UIWindowScene *ws = (UIWindowScene *)scene;
                 if (ws.activationState == UISceneActivationStateForegroundActive) {
-                    return (NSInteger)ws.interfaceOrientation;
+                    NSInteger o = (NSInteger)ws.interfaceOrientation;
+                    if (o > 0) {
+                        gCachedOrientation = o;
+                        gHasCache = YES;
+                    }
+                    return o;
                 }
             }
         }

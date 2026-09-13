@@ -23,12 +23,13 @@ enum FangUIBridge {
     private static var surface: UIColor = Palette.light.bg
     /// 面板控制器强引用（视图挂在窗口上，控制器不能被释放）。
     private static var panel: RootViewController?
-    /// 用户拖动后的窗口位置：心跳重设几何时沿用它，不再回到默认位。
-    private static var customFrame: CGRect?
+    /// 用户拖动后的面板中心：心跳重设几何时沿用它，不再回到默认位。
+    /// 存 center 而不是 frame —— 窗口带方向变换时 frame 是包围盒，不可靠。
+    private static var customCenter: CGPoint?
 
-    /// 拖动把手回调：把窗口搬到新位置并记住。
-    static func setPanelFrame(_ frame: CGRect) {
-        customFrame = frame
+    /// 拖动把手回调：把面板搬到新位置并记住。
+    static func setPanelCenter(_ center: CGPoint) {
+        customCenter = center
         guard let w = window else { return }
         applySceneGeometry(w)
     }
@@ -58,6 +59,10 @@ enum FangUIBridge {
         startOrientationObserver()
 
         if let w = window {
+            // 复用同一窗口：面板视图必须还在，否则重建，避免残留一份。
+            if panel == nil || panel?.view.superview == nil {
+                attachPanel(to: w)
+            }
             applySceneGeometry(w)
             reassert(w)
             registerWithSpringBoard(w)
@@ -76,20 +81,12 @@ enum FangUIBridge {
         // 绕开 UIKit 对 rootViewController.view 的方向旋转。
         w.rootViewController = FangUIContentHost()
 
-        let content = RootViewController()
-        content.onSurfaceColorChange = { color in surface = color }
-        content.onRequestClose = { onPowerOff?(false) }
-        content.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        w.addSubview(content.view)
-        panel = content
-
         if #available(iOS 13.0, *) {
             if let scene = preferredWindowScene() {
                 w.windowScene = scene
             }
         }
-        // Portrait bounds + landscape SpringBoard = 90° rotated text. Always
-        // rebuild frame from interface orientation, keep transform identity.
+        attachPanel(to: w)
         applySceneGeometry(w)
 
         w.isHidden = false
@@ -107,13 +104,28 @@ enum FangUIBridge {
         startKeepAlive()
     }
 
+    /// 保证窗口里只有一份面板视图。
+    private static func attachPanel(to w: UIWindow) {
+        if let existing = panel, existing.view.superview === w { return }
+        panel?.view.removeFromSuperview()
+
+        let content = RootViewController()
+        content.onSurfaceColorChange = { color in surface = color }
+        content.onRequestClose = { onPowerOff?(false) }
+        content.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        w.addSubview(content.view)
+        panel = content
+    }
+
     private static func hide() {
         keepAlive?.invalidate()
         keepAlive = nil
         FangUIOrientationBridge.stopObserving()
         guard let w = window else { return }
         window = nil
+        panel?.view.removeFromSuperview()
         panel = nil
+        customCenter = nil
         w.isHidden = true
         w.rootViewController = nil
         if w.isKeyWindow {
@@ -155,54 +167,79 @@ enum FangUIBridge {
     }
 
     /// 面板 ＝ 一块悬浮卡片：窗口只覆盖卡片（加上阴影边距）。
-    /// 关键：窗口交给 SpringBoard 托管后，系统会按当前界面方向再转一次，
-    /// 所以这里不是「强制归零」，而是给窗口施加**反向**变换把它抵消掉。
+    ///
+    /// 三处修正：
+    /// 1. 几何用 **scene 坐标空间**，不用 `UIScreen.main.bounds`
+    ///    （横屏时后者常是竖屏尺寸，卡片会被算到屏幕外 → 左上角/出屏）。
+    /// 2. 夹取位置用 **旋转后的包围盒**，否则一转就顶出屏幕。
+    /// 3. 方向变换可切换（`PanelOrientation`），不再写死 identity。
     private static func applySceneGeometry(_ w: UIWindow) {
-        let screen = UIScreen.main.bounds
+        let space = geometrySpace()
         let inset = RootViewController.shadowInset
-        let panelW = min(max(screen.width * 0.42, 360), 560)
-        let panelH = min(max(screen.height * 0.62, 320), 470)
-        let winW = panelW + inset * 2
-        let winH = panelH + inset * 2
 
-        var frame = customFrame ?? CGRect(
-            x: (screen.width - winW) / 2,
-            y: max(screen.height * 0.10, (screen.height - winH) / 2 - 40),
-            width: winW, height: winH
-        )
-        frame.size = CGSize(width: winW, height: winH)
-        frame.origin.x = min(max(frame.origin.x, 0), max(0, screen.width - winW))
-        frame.origin.y = min(max(frame.origin.y, 0), max(0, screen.height - winH))
+        // 卡片取横向比例，保证宽 > 高（原版是长方形卡片）。
+        let panelW = min(max(space.width * 0.58, 420), 720)
+        let panelH = min(max(space.height * 0.62, 320), 500)
+        let winSize = CGSize(width: panelW + inset * 2, height: panelH + inset * 2)
 
-        // Rotate about the panel centre so counter-rotation keeps it in place.
-        let center = CGPoint(x: frame.midX, y: frame.midY)
-        let comp = compensationTransform()
+        let comp = PanelOrientation.transform()
+        // 旋转以中心为轴：先定中心，再用旋转后的半宽半高夹取。
+        let rotated = CGRect(origin: .zero, size: winSize).applying(comp)
+        let halfW = abs(rotated.width) / 2
+        let halfH = abs(rotated.height) / 2
 
-        let changed = w.bounds.size != CGSize(width: winW, height: winH)
-            || w.center != center
-            || w.transform != comp
+        var center: CGPoint
+        if let saved = customCenter {
+            center = saved
+        } else {
+            center = CGPoint(x: space.midX, y: space.midY - space.height * 0.06)
+        }
+        center.x = min(max(center.x, halfW), max(halfW, space.width - halfW))
+        center.y = min(max(center.y, halfH), max(halfH, space.height - halfH))
 
+        let changed = w.bounds.size != winSize || w.center != center || w.transform != comp
         if changed {
             w.transform = .identity
-            w.bounds = CGRect(x: 0, y: 0, width: winW, height: winH)
+            w.bounds = CGRect(origin: .zero, size: winSize)
             w.center = center
             w.transform = comp
             w.rootViewController?.view.transform = .identity
-            panel?.view.transform = .identity
             w.setNeedsLayout()
             w.layoutIfNeeded()
         }
+        panel?.view.transform = .identity
         panel?.view.frame = w.bounds
     }
 
-    /// 抵消 SpringBoard 对托管窗口施加的方向旋转。
-    private static func compensationTransform() -> CGAffineTransform {
-        switch currentOrientation() {
-        case .landscapeLeft:       return CGAffineTransform(rotationAngle: .pi / 2)
-        case .landscapeRight:      return CGAffineTransform(rotationAngle: -.pi / 2)
-        case .portraitUpsideDown:  return CGAffineTransform(rotationAngle: .pi)
-        default:                   return .identity
+    /// 浮动窗口的自然坐标空间：优先当前 scene，其次屏幕。
+    private static func geometrySpace() -> CGRect {
+        if #available(iOS 13.0, *) {
+            if let scene = (window?.windowScene ?? preferredWindowScene()) {
+                let b = scene.coordinateSpace.bounds
+                if b.width > 0 && b.height > 0 { return b }
+            }
         }
+        return UIScreen.main.bounds
+    }
+
+    /// 面板几何快照，供诊断行显示。
+    static func geometryDescription() -> String {
+        let space = geometrySpace()
+        let size = window?.bounds.size ?? .zero
+        return String(format: "sp %.0f×%.0f · win %.0f×%.0f · %@",
+                      space.width, space.height, size.width, size.height,
+                      PanelOrientation.describe())
+    }
+
+    /// 长按品牌区循环切换方向修正。
+    @discardableResult
+    static func cycleOrientationFix() -> String {
+        let fix = PanelOrientation.cycle()
+        if let w = window {
+            applySceneGeometry(w)
+            registerWithSpringBoard(w)
+        }
+        return fix.label
     }
 
     /// UIInterfaceOrientation from SpringBoard (FBSOrientationObserver) or fallback.

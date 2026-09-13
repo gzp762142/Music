@@ -188,6 +188,12 @@ final class RootViewController: UIViewController {
         dragHandle.addGestureRecognizer(
             UIPanGestureRecognizer(target: self, action: #selector(onDrag(_:)))
         )
+        // 长按同一区域：循环方向修正档位。
+        let cycle = UILongPressGestureRecognizer(
+            target: self, action: #selector(onCycleOrientation(_:))
+        )
+        cycle.minimumPressDuration = 0.7
+        dragHandle.addGestureRecognizer(cycle)
         cardView.addSubview(dragHandle)
 
         applyPalette(animated: false)
@@ -393,14 +399,7 @@ final class RootViewController: UIViewController {
         diagTick += 1
         if diagTick % 30 == 1 {
             diagLabel.textColor = p.textDim
-            let screen = UIScreen.main.bounds
-            diagLabel.text = String(
-                format: "win %.0f×%.0f · card %.0f×%.0f · tf %.2f/%.2f · %@",
-                view.bounds.width, view.bounds.height,
-                cardView.bounds.width, cardView.bounds.height,
-                view.transform.a, view.transform.b,
-                screen.width >= screen.height ? "landscape" : "portrait"
-            )
+            diagLabel.text = FangUIBridge.geometryDescription()
         }
     }
 
@@ -449,15 +448,23 @@ final class RootViewController: UIViewController {
         onRequestClose?()
     }
 
-    /// 拖拽把手：把悬浮窗口搬到新位置（坐标写回 Bridge，心跳重设几何时沿用）。
+    /// 拖拽把手：把悬浮窗口搬到新位置。
+    /// 窗口带方向变换时 `frame` 是旋转后的包围盒，平移必须用 center 才准。
     @objc private func onDrag(_ g: UIPanGestureRecognizer) {
-        guard let win = view.window, let superview = win.superview else { return }
-        let t = g.translation(in: superview)
-        g.setTranslation(.zero, in: superview)
-        var frame = win.frame
-        frame.origin.x += t.x
-        frame.origin.y += t.y
-        FangUIBridge.setPanelFrame(frame)
+        guard let win = view.window else { return }
+        let space = win.superview ?? win
+        let t = g.translation(in: space)
+        g.setTranslation(.zero, in: space)
+        FangUIBridge.setPanelCenter(CGPoint(x: win.center.x + t.x,
+                                            y: win.center.y + t.y))
+    }
+
+    /// 长按品牌区：循环切换方向修正（在设备上找回正确的变换，不用重编）。
+    @objc private func onCycleOrientation(_ g: UILongPressGestureRecognizer) {
+        guard g.state == .began else { return }
+        let label = FangUIBridge.cycleOrientationFix()
+        badgeLabel.text = "  ● \(label)  "
+        setNeedsLayout()
     }
 
     deinit {

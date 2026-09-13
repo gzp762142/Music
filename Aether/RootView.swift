@@ -13,6 +13,21 @@ final class AppState: ObservableObject {
     @Published var sessionStart: Date?
     @Published var cardMessage: String?
 
+    private let volumeMonitor = VolumeButtonMonitor()
+
+    init() {
+        volumeMonitor.onVolumeUp = { [weak self] in
+            // 音量+：只弹出菜单，不强制改电源状态
+            guard let self, self.phase == .control else { return }
+            FangUIBridge.setVisible(true)
+        }
+        volumeMonitor.onVolumeDown = { [weak self] in
+            // 音量-：只收起菜单，服务可继续跑
+            guard let self, self.phase == .control else { return }
+            FangUIBridge.setVisible(false)
+        }
+    }
+
     func completeLoading() {
         withAnimation(.easeInOut(duration: 0.45)) {
             phase = .unlock
@@ -27,6 +42,7 @@ final class AppState: ObservableObject {
             phase = .control
         }
         FangUIBridge.setVisible(false)
+        volumeMonitor.start()
     }
 
     func setPower(_ on: Bool) {
@@ -59,8 +75,11 @@ final class AppState: ObservableObject {
     func resyncOverlay() {
         switch phase {
         case .control:
-            FangUIBridge.setVisible(isPoweredOn)
+            // Do not force overlay to match power — volume keys may have hidden UI
+            // while service stays on. Only ensure monitor is running.
+            volumeMonitor.start()
         case .loading, .unlock:
+            volumeMonitor.stop()
             FangUIBridge.setVisible(false)
         }
     }

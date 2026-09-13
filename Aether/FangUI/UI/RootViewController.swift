@@ -72,7 +72,7 @@ final class RootViewController: UIViewController {
         brandLabel.font = .systemFont(ofSize: 20, weight: .bold)
         brandLabel.text = "DsTool"
         brandSub.font = .systemFont(ofSize: 11, weight: .medium)
-        brandSub.text = "UI THEME KIT · v3"
+        brandSub.text = "UI THEME KIT · v4"
         titleLabel.font = .systemFont(ofSize: 24, weight: .bold)
         titleLabel.text = tabTitles[0]
         titleLabel.adjustsFontSizeToFitWidth = true
@@ -177,6 +177,9 @@ final class RootViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+
+        // 每轮布局都归位：任何方向旋转都在这里被抹掉。
+        if view.transform != .identity { view.transform = .identity }
 
         // 面板 ＝ 整个窗口。
         cardView.frame = view.bounds
@@ -366,12 +369,13 @@ final class RootViewController: UIViewController {
             diagLabel.textColor = p.textDim
             let screen = UIScreen.main.bounds
             diagLabel.text = String(
-                format: "win %.0f×%.0f · card %.0f×%.0f · page %.0f×%.0f · s0 %.0f×%.0f/%d · %@",
+                format: "win %.0f×%.0f · card %.0f×%.0f · page %.0f×%.0f · s0 %.0f×%.0f/%d · tf %.2f/%.2f · %@",
                 view.bounds.width, view.bounds.height,
                 cardView.bounds.width, cardView.bounds.height,
                 contentContainer.bounds.width, contentContainer.bounds.height,
                 pages[0].contentStack.bounds.width, pages[0].contentStack.bounds.height,
                 pages[0].contentStack.arrangedSubviews.count,
+                view.transform.a, view.transform.b,
                 screen.width >= screen.height ? "landscape" : "portrait"
             )
         }

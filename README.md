@@ -16,5 +16,5 @@ open Music.xcodeproj
 
 ## CI
 
-push / 手动触发 `Build tipa`，Artifacts 下载 `Music-tipa`。  
-打 tag（如 `v1.02`）会附到 Release。
+push / 手动触发 `Build tipa`，Actions → Artifacts 下载 `Music-tipa`。  
+打 tag（如 `v1.02`）会把 tipa 附到 Release。

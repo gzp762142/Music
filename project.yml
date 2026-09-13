@@ -37,6 +37,9 @@ targets:
         CODE_SIGN_IDENTITY: ""
         CODE_SIGNING_REQUIRED: NO
         CODE_SIGNING_ALLOWED: NO
+        SWIFT_OBJC_BRIDGING_HEADER: Aether/Bridging-Bridge.h
+        CLANG_ENABLE_MODULES: YES
+        ALWAYS_SEARCH_USER_PATHS: NO
 schemes:
   Music:
     build:

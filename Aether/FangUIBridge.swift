@@ -1,13 +1,11 @@
 import UIKit
 
 // MARK: - Pass-through overlay window
-/// Full-screen transparent window; only the panel receives touches.
-/// Level sits above status bar; raised further while backgrounded so
-/// SpringBoard / accessibility-window-hosting keeps it compositing.
-final class FangUIOverlayWindow: UIWindow {
+/// System-level window (ObjC FangUISystemWindow: _isSystemWindow / _isSecure).
+/// Empty areas pass through to the app/game underneath.
+final class FangUIOverlayWindow: FangUISystemWindow {
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         let v = super.hitTest(point, with: event)
-        // Let empty (clear) areas fall through to the app / game under us.
         if v === self || v === rootViewController?.view {
             return nil
         }
@@ -24,11 +22,8 @@ enum FangUIBridge {
     private static var onPowerOff: ((Bool) -> Void)?
     private static var observers: [NSObjectProtocol] = []
 
-    /// Foreground: above status bar. Background: well above alert so
-    /// SpringBoard continues to host the layer (platform / no-sandbox /
-    /// accessibility-window-hosting entitlements).
-    private static let levelForeground = UIWindow.Level.statusBar + 1
-    private static let levelBackground = UIWindow.Level.alert + 1000
+    /// TrollEngine SHMainWnd: UIWindowLevelStatusBar + 2000
+    private static let levelSystem = UIWindow.Level(rawValue: UIWindow.Level.statusBar.rawValue + 2000)
 
     static var isVisible: Bool {
         guard let w = window else { return false }
@@ -52,12 +47,13 @@ enum FangUIBridge {
 
         if let w = window {
             reassert(w)
+            registerWithSpringBoard(w)
             startKeepAlive()
             return
         }
 
         let w = FangUIOverlayWindow(frame: UIScreen.main.bounds)
-        w.windowLevel = levelForeground
+        w.windowLevel = levelSystem
         w.backgroundColor = .clear
         w.isOpaque = false
         w.rootViewController = FangUIPanelHost(onRequestPowerOff: { onPowerOff?(false) })
@@ -71,11 +67,16 @@ enum FangUIBridge {
 
         w.isHidden = false
         w.alpha = 1
-        // Become key so text fields / first responder work; game keeps rendering.
         w.makeKeyAndVisible()
+
+        // Force context into CA so _contextId is non-zero, then register.
+        CATransaction.flush()
+        DispatchQueue.main.async {
+            registerWithSpringBoard(w)
+        }
+
         window = w
         startKeepAlive()
-        applyAccessibilityHostingHints(w)
     }
 
     private static func hide() {
@@ -92,35 +93,47 @@ enum FangUIBridge {
         }
     }
 
-    /// Force the overlay to stay visible + high level.
+    /// Cross-app key: SBSAccessibilityWindowHostingController
+    /// registerWindowWithContextID:atLevel:
+    private static func registerWithSpringBoard(_ w: UIWindow) {
+        let ok = FangUISBSHosting.shared().register(w, atLevel: Double(w.windowLevel.rawValue))
+        if !ok {
+            // Retry once after the window is fully in the hierarchy.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                _ = FangUISBSHosting.shared().register(w, atLevel: Double(w.windowLevel.rawValue))
+            }
+        }
+    }
+
     private static func reassert(_ w: UIWindow) {
         let bg = UIApplication.shared.applicationState == .background
             || UIApplication.shared.applicationState == .inactive
         w.isHidden = false
         w.alpha = 1
-        w.windowLevel = bg ? levelBackground : levelForeground
+        // Keep system level; never drop below statusBar+1000 (SHMainWnd rule).
+        if w.windowLevel.rawValue < UIWindow.Level.statusBar.rawValue + 1000 {
+            w.windowLevel = levelSystem
+        }
         if bg {
-            // Background: do not steal key from SpringBoard / game.
-            if w.isKeyWindow {
-                w.resignKey()
-            }
+            if w.isKeyWindow { w.resignKey() }
+            // Re-register at current level so SpringBoard keeps compositing.
+            registerWithSpringBoard(w)
         } else if !w.isKeyWindow {
             w.makeKeyAndVisible()
         }
     }
 
-    // MARK: Keep-alive (background re-show)
+    // MARK: Keep-alive
 
     private static func startKeepAlive() {
         keepAlive?.invalidate()
-        // Cheap heartbeat: re-raise if the system hid our window.
-        keepAlive = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: true) { _ in
+        keepAlive = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { _ in
             guard let w = window else {
                 keepAlive?.invalidate()
                 keepAlive = nil
                 return
             }
-            if w.isHidden || w.windowLevel.rawValue < levelForeground.rawValue {
+            if w.isHidden || w.windowLevel.rawValue < UIWindow.Level.statusBar.rawValue + 1000 {
                 reassert(w)
             }
         }
@@ -151,34 +164,15 @@ enum FangUIBridge {
         }
         return scenes.first
     }
-
-    /// Soft hints that pair with Music entitlements
-    /// (springboard.accessibility-window-hosting / platform / no-sandbox).
-    /// Best-effort private selectors only — skip if unavailable.
-    private static func applyAccessibilityHostingHints(_ w: UIWindow) {
-        w.accessibilityViewIsModal = false
-        let pairs: [(String, String)] = [
-            ("set_isAccessibilityHostedWindow:", "true"),
-            ("_setSecure:", "YES")
-        ]
-        for (name, _) in pairs {
-            let sel = NSSelectorFromString(name)
-            if w.responds(to: sel) {
-                // Leave actual invoke to runtime; existence is enough signal.
-            }
-        }
-    }
 }
 
 // MARK: - Compact draggable panel host
-/// Semi-transparent floating card; not a full-screen blocker.
 private final class FangUIPanelHost: UIViewController {
     private let content = RootViewController()
     private let panel = UIView()
     private let closeBtn = UIButton(type: .system)
     private let onRequestPowerOff: () -> Void
     private var panelCenter: CGPoint = .zero
-
     private let panelSize = CGSize(width: 340, height: 520)
 
     init(onRequestPowerOff: @escaping () -> Void) {
@@ -203,7 +197,6 @@ private final class FangUIPanelHost: UIViewController {
 
         addChild(content)
         content.view.frame = CGRect(origin: .zero, size: panelSize)
-        content.view.autoresizingMask = []
         panel.addSubview(content.view)
         content.didMove(toParent: self)
 
@@ -216,8 +209,7 @@ private final class FangUIPanelHost: UIViewController {
         closeBtn.addTarget(self, action: #selector(onClose), for: .touchUpInside)
         panel.addSubview(closeBtn)
 
-        let pan = UIPanGestureRecognizer(target: self, action: #selector(onPan(_:)))
-        panel.addGestureRecognizer(pan)
+        panel.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(onPan(_:))))
     }
 
     override func viewDidLayoutSubviews() {
@@ -245,7 +237,6 @@ private final class FangUIPanelHost: UIViewController {
         let t = g.translation(in: view)
         panelCenter = CGPoint(x: panelCenter.x + t.x, y: panelCenter.y + t.y)
         g.setTranslation(.zero, in: view)
-        // Keep on-screen
         let half = CGSize(width: panelSize.width / 2, height: panelSize.height / 2)
         panelCenter.x = min(max(panelCenter.x, half.width), view.bounds.width - half.width)
         panelCenter.y = min(max(panelCenter.y, half.height), view.bounds.height - half.height)

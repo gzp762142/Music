@@ -7,13 +7,14 @@ iOS 壳子（加载 → 卡密 → 控制台），身份皮对齐 Apple Music。
 - 图标: 脱壳 `Apple Music_3.4_decrypted.ipa` 内 `AppIcon*.png`（CgBI 已转标准 PNG）
 - 产物: GitHub Actions 编出 unsigned `Music.tipa`
 
-## FangUI 接入
+## FangUI 接入（对齐 TrollEngine）
 
-- **独立 `FangUIOverlayWindow`**，`windowLevel`：前台 `statusBar+1`，后台 `alert+1000`
-- 进后台 **不释放**，心跳 + 生命周期通知里 `reassert`（配合 platform / no-sandbox / accessibility-window-hosting）
-- **半透明可拖小面板**（约 340×520），空白区 `hitTest` 穿透，不全屏挡游戏
-- **卡密后默认关**；电源开 / 音量+ 显示；电源关 / 音量- / 面板「关闭」隐藏并释放
-- 身份 entitlements 不改
+- `FangUISystemWindow`（ObjC）：`_isSystemWindow` / `_isWindowServerHostingManaged=NO` / `_isSecure` / `_shouldCreateContextAsSecure`
+- `windowLevel = statusBar + 2000`（SHMainWnd 同款）
+- `FangUISBSHosting`：`objc_getClass("SBSAccessibilityWindowHostingController")` + `registerWindowWithContextID:atLevel:`（`_contextId`）
+- 进后台不释放，心跳 reassert + **重新 register**
+- 半透明可拖小面板，空白区 hitTest 穿透
+- entitlements 不改（已有 accessibility-window-hosting）
 
 ## 本地生成工程
 

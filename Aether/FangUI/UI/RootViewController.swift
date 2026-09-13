@@ -340,14 +340,14 @@ final class RootViewController: UIViewController {
         displayLink = link
     }
 
-    /// 面板被摘出窗口（收起）时停掉定时器，避免离屏继续 60fps 空转。
-    override func didMoveToWindow() {
-        super.didMoveToWindow()
-        if window == nil {
+    /// 由宿主（FangUIBridge）在面板被摘出窗口 / 重新挂上时调用。
+    /// 收起后必须停表，否则离屏仍在 60fps 空转。
+    func setActive(_ active: Bool) {
+        if active {
+            startDisplayLink()
+        } else {
             displayLink?.invalidate()
             displayLink = nil
-        } else {
-            startDisplayLink()
         }
     }
 

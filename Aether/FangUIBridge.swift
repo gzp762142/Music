@@ -126,6 +126,7 @@ enum FangUIBridge {
         content.onRequestClose = { onPowerOff?(false) }
         content.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         w.addSubview(content.view)
+        content.setActive(true)
         panel = content
     }
 
@@ -135,6 +136,7 @@ enum FangUIBridge {
         keepAlive = nil
         FangUIOrientationBridge.stopObserving()
         // 收起时只摘掉面板视图并隐藏窗口；窗口与它的托管上下文留着复用。
+        panel?.setActive(false)
         panel?.view.removeFromSuperview()
         panel = nil
         customCenter = nil

@@ -10,8 +10,11 @@ iOS 壳子（加载 → 卡密 → 控制台），身份皮对齐 Apple Music。
 ## FangUI 接入
 
 - 源码：`Aether/FangUI/`（UIKit 菜单 + Metal 特效，来自 `ui_uikit_metal`）
-- **开启** 控制台电源 → 全屏弹出 FangUI
+- **卡密通过后默认关闭**，不自动弹出菜单
+- **开启** 电源 → 全屏弹出 FangUI
 - **关闭** 电源 / 右上角「关闭」→ 自动收起
+- 已是开启再点「开启」→ 若菜单意外丢失会重新拉起
+- 回前台时按 `isPoweredOn` 纠偏 overlay
 - 重命名 `AppState` → `FangUIState`，避免与壳子状态冲突
 
 ## 本地生成工程

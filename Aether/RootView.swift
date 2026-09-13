@@ -8,7 +8,8 @@ enum AppPhase {
 
 final class AppState: ObservableObject {
     @Published var phase: AppPhase = .loading
-    @Published var isPoweredOn = true
+    /// Default OFF — cheat UI must not appear until user explicitly turns it on.
+    @Published var isPoweredOn = false
     @Published var sessionStart: Date?
     @Published var cardMessage: String?
 
@@ -20,28 +21,48 @@ final class AppState: ObservableObject {
 
     func enterControl() {
         sessionStart = Date()
-        isPoweredOn = true
+        // Fresh session after card-key: stay OFF. User must tap 开启.
+        isPoweredOn = false
         withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
             phase = .control
         }
-        FangUIBridge.setVisible(true)
+        FangUIBridge.setVisible(false)
     }
 
     func setPower(_ on: Bool) {
-        guard on != isPoweredOn else {
-            // still sync overlay if already matching (e.g. first paint)
-            FangUIBridge.setVisible(on)
-            return
+        if on {
+            if !isPoweredOn {
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                    isPoweredOn = true
+                }
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            }
+            // Re-tap 开启 while already on: re-present if overlay was lost
+            // (crash of Metal layer, window recreate, etc.).
+            FangUIBridge.setVisible(true)
+        } else {
+            if isPoweredOn {
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                    isPoweredOn = false
+                }
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            }
+            FangUIBridge.setVisible(false)
         }
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-            isPoweredOn = on
-        }
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        FangUIBridge.setVisible(on)
     }
 
     func powerOffFromOverlay() {
         setPower(false)
+    }
+
+    /// Call when returning to foreground so UI/state stay consistent.
+    func resyncOverlay() {
+        switch phase {
+        case .control:
+            FangUIBridge.setVisible(isPoweredOn)
+        case .loading, .unlock:
+            FangUIBridge.setVisible(false)
+        }
     }
 }
 
@@ -70,6 +91,15 @@ struct RootView: View {
             }
         }
         .preferredColorScheme(.light)
+        .onAppear {
+            NotificationCenter.default.addObserver(
+                forName: UIApplication.willEnterForegroundNotification,
+                object: nil,
+                queue: .main
+            ) { _ in
+                state.resyncOverlay()
+            }
+        }
     }
 }
 

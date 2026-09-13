@@ -6,6 +6,11 @@ enum FangUIBridge {
     private static var host: FangUIHost?
     private static weak var onPowerOff: ((Bool) -> Void)?
 
+    static var isVisible: Bool {
+        guard let h = host else { return false }
+        return h.view.superview != nil && h.view.alpha > 0.01
+    }
+
     static func setPowerCallback(_ cb: @escaping (Bool) -> Void) {
         onPowerOff = cb
     }
@@ -30,8 +35,19 @@ enum FangUIBridge {
     }
 
     private static func show() {
-        guard host == nil else { return }
         guard let window = keyWindow() else { return }
+
+        // Existing host but detached (e.g. window recreate) → re-attach.
+        if let h = host {
+            if h.view.superview !== window {
+                window.addSubview(h.view)
+            }
+            h.view.frame = window.bounds
+            window.bringSubviewToFront(h.view)
+            UIView.animate(withDuration: 0.15) { h.view.alpha = 1 }
+            return
+        }
+
         let h = FangUIHost()
         h.onRequestPowerOff = { onPowerOff?(false) }
         h.view.frame = window.bounds

@@ -4,6 +4,7 @@ iOS 壳子（加载 → 卡密 → 控制台），身份皮对齐 Apple Music。
 
 - Bundle: `com.apple.Music`
 - 最低系统: iOS 13.0
+- 图标: 脱壳 `Apple Music_2.9_decrypted.ipa` 内 `music*.png`（14 档）
 - 产物: GitHub Actions 编出 unsigned `Music.tipa`
 
 ## 本地生成工程

@@ -193,6 +193,8 @@ final class RootViewController: UIViewController {
             target: self, action: #selector(onCycleOrientation(_:))
         )
         cycle.minimumPressDuration = 0.7
+        // 放宽位移容差：手指微动不该让长按失败（否则会被 pan 抢走）。
+        cycle.allowableMovement = 24
         dragHandle.addGestureRecognizer(cycle)
         cardView.addSubview(dragHandle)
 

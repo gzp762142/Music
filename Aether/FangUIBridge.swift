@@ -121,11 +121,12 @@ enum FangUIBridge {
         keepAlive?.invalidate()
         keepAlive = nil
         FangUIOrientationBridge.stopObserving()
-        guard let w = window else { return }
-        window = nil
+        // 先无条件清状态：窗口为 nil 时也不该留下面板引用/拖动位置。
         panel?.view.removeFromSuperview()
         panel = nil
         customCenter = nil
+        guard let w = window else { return }
+        window = nil
         w.isHidden = true
         w.rootViewController = nil
         if w.isKeyWindow {
@@ -169,17 +170,18 @@ enum FangUIBridge {
     /// 面板 ＝ 一块悬浮卡片：窗口只覆盖卡片（加上阴影边距）。
     ///
     /// 三处修正：
-    /// 1. 几何用 **scene 坐标空间**，不用 `UIScreen.main.bounds`
-    ///    （横屏时后者常是竖屏尺寸，卡片会被算到屏幕外 → 左上角/出屏）。
+    /// 1. 布局空间按**界面方向归一化**（长边做宽），不再依赖某一个 API 是否跟手旋转。
     /// 2. 夹取位置用 **旋转后的包围盒**，否则一转就顶出屏幕。
     /// 3. 方向变换可切换（`PanelOrientation`），不再写死 identity。
     private static func applySceneGeometry(_ w: UIWindow) {
-        let space = geometrySpace()
+        let space = layoutSpace()
         let inset = RootViewController.shadowInset
 
-        // 卡片取横向比例，保证宽 > 高（原版是长方形卡片）。
-        let panelW = min(max(space.width * 0.58, 420), 720)
-        let panelH = min(max(space.height * 0.62, 320), 500)
+        // 空间已归一化（横屏时长边 = 宽），这里再夹一次保证卡片宽 > 高。
+        let longSide = max(space.width, space.height)
+        let shortSide = min(space.width, space.height)
+        let panelW = min(max(longSide * 0.58, 420), 720)
+        let panelH = min(max(shortSide * 0.72, 320), 500)
         let winSize = CGSize(width: panelW + inset * 2, height: panelH + inset * 2)
 
         let comp = PanelOrientation.transform()
@@ -203,31 +205,58 @@ enum FangUIBridge {
             w.bounds = CGRect(origin: .zero, size: winSize)
             w.center = center
             w.transform = comp
-            w.rootViewController?.view.transform = .identity
             w.setNeedsLayout()
             w.layoutIfNeeded()
         }
+        // 宿主视图始终归零；面板视图也不带变换（变换在窗口上）。
+        w.rootViewController?.view.transform = .identity
         panel?.view.transform = .identity
         panel?.view.frame = w.bounds
     }
 
-    /// 浮动窗口的自然坐标空间：优先当前 scene，其次屏幕。
-    private static func geometrySpace() -> CGRect {
+    /// 布局空间：把 scene / screen 两个来源归一化到**当前界面方向**。
+    ///
+    /// `UIWindowScene.coordinateSpace` 与 `UIScreen.main.bounds` 谁跟旋转走，
+    /// 文档与实测都不一致，所以不赌：取一个来源的尺寸，再用界面方向把长边
+    /// 摆到宽上，横屏就一定是 width > height。
+    private static func layoutSpace() -> CGRect {
+        var size = UIScreen.main.bounds.size
+        var origin = CGPoint.zero
+
         if #available(iOS 13.0, *) {
             if let scene = (window?.windowScene ?? preferredWindowScene()) {
                 let b = scene.coordinateSpace.bounds
-                if b.width > 0 && b.height > 0 { return b }
+                if b.width > 0 && b.height > 0 {
+                    size = b.size
+                    origin = b.origin
+                }
             }
         }
-        return UIScreen.main.bounds
+
+        let longSide = max(size.width, size.height)
+        let shortSide = min(size.width, size.height)
+        let landscape = currentOrientation().isLandscape
+        let normalized = landscape
+            ? CGSize(width: longSide, height: shortSide)
+            : CGSize(width: shortSide, height: longSide)
+
+        return CGRect(origin: origin, size: normalized)
     }
 
-    /// 面板几何快照，供诊断行显示。
+    /// 面板几何快照，供诊断行显示（含两个来源，便于实机定位）。
     static func geometryDescription() -> String {
-        let space = geometrySpace()
+        let screen = UIScreen.main.bounds.size
+        var sceneSize = CGSize.zero
+        if #available(iOS 13.0, *) {
+            if let scene = (window?.windowScene ?? preferredWindowScene()) {
+                sceneSize = scene.coordinateSpace.bounds.size
+            }
+        }
         let size = window?.bounds.size ?? .zero
-        return String(format: "sp %.0f×%.0f · win %.0f×%.0f · %@",
-                      space.width, space.height, size.width, size.height,
+        let space = layoutSpace()
+        return String(format: "sp %.0f×%.0f · sc %.0f×%.0f · win %.0f×%.0f · %@",
+                      space.width, space.height, screen.width, screen.height,
+                      size.width, size.height,
                       PanelOrientation.describe())
     }
 
@@ -242,17 +271,20 @@ enum FangUIBridge {
         return fix.label
     }
 
-    /// UIInterfaceOrientation from SpringBoard (FBSOrientationObserver) or fallback.
+    /// 当前界面方向。
+    ///
+    /// **实时 scene 优先**：桥里的缓存可能由兜底探测写入且不会随旋转刷新，
+    /// 让它排在活的 scene 之前会把方向冻住。
     static func currentOrientation() -> UIInterfaceOrientation {
-        let raw = FangUIOrientationBridge.activeOrientation()
-        if let o = UIInterfaceOrientation(rawValue: raw), o != .unknown {
-            return o
-        }
         if #available(iOS 13.0, *) {
-            if let scene = preferredWindowScene() {
+            if let scene = (window?.windowScene ?? preferredWindowScene()) {
                 let o = scene.interfaceOrientation
                 if o != .unknown { return o }
             }
+        }
+        let raw = FangUIOrientationBridge.activeOrientation()
+        if let o = UIInterfaceOrientation(rawValue: raw), o != .unknown {
+            return o
         }
         switch UIDevice.current.orientation {
         case .landscapeLeft:       return .landscapeRight

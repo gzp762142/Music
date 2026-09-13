@@ -2,6 +2,7 @@
 #import <objc/runtime.h>
 
 static id gObserver = nil;
+static id gFallbackToken = nil;
 static NSInteger gCachedOrientation = 0;
 static BOOL gHasCache = NO;
 
@@ -66,10 +67,12 @@ static BOOL gHasCache = NO;
 
     // Fallback: UIDevice orientation notifications
     [[UIDevice currentDevice] beginGeneratingDeviceOrientationNotifications];
-    [[NSNotificationCenter defaultCenter] addObserverForName:UIDeviceOrientationDidChangeNotification
-                                                      object:nil
-                                                       queue:[NSOperationQueue mainQueue]
-                                                  usingBlock:^(NSNotification *note) {
+    // 块式观察者必须留下 token 才能移除；removeObserver:self 删不掉它。
+    gFallbackToken = [[NSNotificationCenter defaultCenter]
+        addObserverForName:UIDeviceOrientationDidChangeNotification
+                    object:nil
+                     queue:[NSOperationQueue mainQueue]
+                usingBlock:^(NSNotification *note) {
         UIDeviceOrientation d = [UIDevice currentDevice].orientation;
         UIInterfaceOrientation o = UIInterfaceOrientationPortrait;
         switch (d) {
@@ -79,6 +82,9 @@ static BOOL gHasCache = NO;
             case UIDeviceOrientationPortrait: o = UIInterfaceOrientationPortrait; break;
             default: return;
         }
+        // 兜底路径同样要刷新缓存，否则缓存永远停在第一次的方向。
+        gCachedOrientation = (NSInteger)o;
+        gHasCache = YES;
         handler((NSInteger)o, 0.25);
     }];
 }
@@ -86,6 +92,10 @@ static BOOL gHasCache = NO;
 + (void)stopObserving {
     gHasCache = NO;
     gCachedOrientation = 0;
+    if (gFallbackToken) {
+        [[NSNotificationCenter defaultCenter] removeObserver:gFallbackToken];
+        gFallbackToken = nil;
+    }
     if (gObserver) {
         SEL inv = NSSelectorFromString(@"invalidate");
         if ([gObserver respondsToSelector:inv]) {
@@ -96,7 +106,6 @@ static BOOL gHasCache = NO;
         }
         gObserver = nil;
     }
-    [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
 + (NSInteger)activeOrientation {

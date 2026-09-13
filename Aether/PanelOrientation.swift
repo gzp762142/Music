@@ -19,6 +19,7 @@ enum PanelOrientation {
         case mirror = 5
         case mirrorCcw90 = 6
         case mirrorCw90 = 7
+        case mirrorHalf = 8
 
         var label: String {
             switch self {
@@ -30,6 +31,7 @@ enum PanelOrientation {
             case .mirror:      return "mirror"
             case .mirrorCcw90: return "mirror-90°"
             case .mirrorCw90:  return "mirror+90°"
+            case .mirrorHalf:  return "mirror180°"
             }
         }
 
@@ -46,6 +48,7 @@ enum PanelOrientation {
                                     .concatenating(CGAffineTransform(scaleX: -1, y: 1))
             case .mirrorCw90:  return CGAffineTransform(rotationAngle: half)
                                     .concatenating(CGAffineTransform(scaleX: -1, y: 1))
+            case .mirrorHalf:  return CGAffineTransform(scaleX: 1, y: -1)
             }
         }
     }

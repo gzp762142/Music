@@ -73,18 +73,30 @@ jobs:
 
           ENT="$(pwd)/Music.entitlements"
           test -f "$ENT"
-          echo "Using entitlements: $ENT"
-          # -S<path> embeds the plist into the code signature.
-          # Bare `ldid -S` writes an EMPTY entitlement set → sandboxed App under TrollStore.
-          ldid -S"$ENT" Payload/Music.app
+          BIN="Payload/Music.app/Music"
+          test -f "$BIN"
+
+          echo "Signing Mach-O with: $ENT"
+          # Sign the executable (not just the .app dir). -S<path> embeds the plist.
+          ldid -S"$ENT" "$BIN"
           echo "ldid sign exit=$?"
 
-          # Verify critical keys landed in the signature.
           echo "---- embedded entitlements ----"
-          ldid -e Payload/Music.app | tee /tmp/embedded.plist
-          grep -q 'com.apple.Music' /tmp/embedded.plist
-          grep -q 'platform-application' /tmp/embedded.plist
-          grep -q 'no-sandbox' /tmp/embedded.plist
+          # Some brew ldid builds assert on `ldid -e <bundle>`; dump from the binary.
+          # Prefer codesign dump; fall back to ldid -e on the binary only.
+          DUMP=/tmp/embedded.plist
+          if codesign -d --entitlements :- "$BIN" >"$DUMP" 2>/tmp/codesign.err; then
+            echo "codesign dump ok"
+          else
+            echo "codesign dump failed, trying ldid -e on binary"
+            cat /tmp/codesign.err || true
+            ldid -e "$BIN" >"$DUMP"
+          fi
+          echo "dump bytes=$(wc -c <"$DUMP")"
+          cat "$DUMP"
+          grep -q 'com.apple.Music' "$DUMP"
+          grep -q 'platform-application' "$DUMP"
+          grep -q 'no-sandbox' "$DUMP"
           echo "entitlements OK"
 
           zip -qry Music.tipa Payload

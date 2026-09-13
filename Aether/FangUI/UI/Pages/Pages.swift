@@ -4,9 +4,38 @@ protocol PageBuildable: AnyObject {
     func rebuild(palette: Palette)
 }
 
+/// 页面统一约定：内容栈高度只由内容决定（不被容器摊开成巨大间距），
+/// 超出可视高度时交给外层 UIScrollView 滚动。
+protocol PageSizing: PageBuildable {
+    var contentStack: UIStackView { get }
+}
+
+extension PageSizing where Self: UIView {
+    func pageContentHeight(forWidth width: CGFloat) -> CGFloat {
+        ceil(fangStackSize(forWidth: width).height) + 8
+    }
+
+    func layoutContentStack() {
+        let size = fangStackSize(forWidth: bounds.width)
+        contentStack.frame = CGRect(x: 4, y: 4,
+                                    width: max(bounds.width - 8, 1),
+                                    height: size.height)
+    }
+
+    func fangStackSize(forWidth width: CGFloat) -> CGSize {
+        let w = max(width - 8, 1)
+        return contentStack.systemLayoutSizeFitting(
+            CGSize(width: w, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        )
+    }
+}
+
 /// 页 0：Overview —— 按钮 / 滑条 / 下拉 / 输入
-final class OverviewPage: UIView, PageBuildable {
+final class OverviewPage: UIView, PageSizing {
     private let stack = UIStackView()
+    var contentStack: UIStackView { stack }
     private let primaryBtn = UIButton(type: .system)
     private let ghostBtn = UIButton(type: .system)
     private let dangerBtn = UIButton(type: .system)
@@ -115,13 +144,14 @@ final class OverviewPage: UIView, PageBuildable {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        stack.frame = bounds.insetBy(dx: 4, dy: 4)
+        layoutContentStack()
     }
 }
 
 /// 页 1：Controls —— 勾选 / 开关 / 单选 / 音量 / 质量
-final class ControlsPage: UIView, PageBuildable {
+final class ControlsPage: UIView, PageSizing {
     private let stack = UIStackView()
+    var contentStack: UIStackView { stack }
     private let state: FangUIState
     private var chips: [CheckChip] = []
     private var toggles: [ToggleSwitch] = []
@@ -214,13 +244,14 @@ final class ControlsPage: UIView, PageBuildable {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        stack.frame = bounds.insetBy(dx: 4, dy: 4)
+        layoutContentStack()
     }
 }
 
 /// 页 2：Colors —— 色板 / 取色 / 进度条
-final class ColorsPage: UIView, PageBuildable {
+final class ColorsPage: UIView, PageSizing {
     private let stack = UIStackView()
+    var contentStack: UIStackView { stack }
     private let swatchRow = UIStackView()
     private let progress = UIProgressView(progressViewStyle: .default)
     private let rgbSlider = UISlider()
@@ -281,13 +312,14 @@ final class ColorsPage: UIView, PageBuildable {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        stack.frame = bounds.insetBy(dx: 4, dy: 4)
+        layoutContentStack()
     }
 }
 
 /// 页 3：Effects —— 背景特效开关 / 粒子
-final class EffectsPage: UIView, PageBuildable {
+final class EffectsPage: UIView, PageSizing {
     private let stack = UIStackView()
+    var contentStack: UIStackView { stack }
     private let state: FangUIState
     private let beamsSwitch = UISwitch()
     private let dotsSwitch = UISwitch()
@@ -353,6 +385,6 @@ final class EffectsPage: UIView, PageBuildable {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        stack.frame = bounds.insetBy(dx: 4, dy: 4)
+        layoutContentStack()
     }
 }

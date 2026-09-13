@@ -1,15 +1,12 @@
 import UIKit
 
-// MARK: - Pass-through overlay window
+// MARK: - Overlay window
 /// System-level window (ObjC FangUISystemWindow: _isSystemWindow / _isSecure).
-/// Empty areas pass through to the app/game underneath.
+/// FangUI 自绘不透明面板：窗口自带底色，任何区域都不透出桌面 / 下层 app。
 final class FangUIOverlayWindow: FangUISystemWindow {
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         let v = super.hitTest(point, with: event)
-        if v === self || v === rootViewController?.view {
-            return nil
-        }
-        return v
+        return v === self ? nil : v
     }
 
     override var canBecomeKey: Bool { true }
@@ -21,6 +18,9 @@ enum FangUIBridge {
     private static var keepAlive: Timer?
     private static var onPowerOff: ((Bool) -> Void)?
     private static var observers: [NSObjectProtocol] = []
+
+    /// 面板不透明底色，由 RootViewController 随明暗主题回传。
+    private static var surface: UIColor = Palette.light.bg
 
     /// TrollEngine SHMainWnd: UIWindowLevelStatusBar + 2000
     private static let levelSystem = UIWindow.Level(rawValue: UIWindow.Level.statusBar.rawValue + 2000)
@@ -55,9 +55,14 @@ enum FangUIBridge {
 
         let w = FangUIOverlayWindow(frame: .zero)
         w.windowLevel = levelSystem
-        w.backgroundColor = .clear
-        w.isOpaque = false
-        w.rootViewController = FangUIContentHost(onRequestPowerOff: { onPowerOff?(false) })
+        // 不透明底：FangUI 面板是唯一可见层，不存在背景图 / 桌面穿透。
+        w.backgroundColor = surface
+        w.isOpaque = true
+        w.rootViewController = FangUIContentHost(
+            surface: surface,
+            onSurfaceChange: { color in surface = color },
+            onRequestPowerOff: { onPowerOff?(false) }
+        )
 
         if #available(iOS 13.0, *) {
             if let scene = preferredWindowScene() {
@@ -128,34 +133,22 @@ enum FangUIBridge {
         }
     }
 
-    /// Rebuild window frame so content is upright on iPad (landscape SpringBoard
-    /// + portrait UIScreen.main.bounds is what rotated the menu 90°).
+    /// 用窗口所属场景的坐标空间直接得出 window frame。
+    /// 旧实现按 interfaceOrientation 手工拼长宽，在 iPad 横屏 SpringBoard 下会
+    /// 算出转过 90° 的 bounds —— 那正是面板旋转、错位、露出桌面的根因。
     private static func applySceneGeometry(_ w: UIWindow) {
         w.transform = .identity
 
-        var size = UIScreen.main.bounds.size
-
+        var frame = UIScreen.main.bounds
         if #available(iOS 13.0, *) {
-            let scene = w.windowScene ?? preferredWindowScene()
-            if let scene = scene {
-                let screen = UIScreen.main.bounds.size
-                let longSide = max(screen.width, screen.height)
-                let shortSide = min(screen.width, screen.height)
-                switch scene.interfaceOrientation {
-                case .landscapeLeft, .landscapeRight:
-                    size = CGSize(width: longSide, height: shortSide)
-                case .portrait, .portraitUpsideDown:
-                    size = CGSize(width: shortSide, height: longSide)
-                default:
-                    // Fall back to scene coordinate space
-                    let cs = scene.coordinateSpace.bounds.size
-                    if cs.width > 0 && cs.height > 0 { size = cs }
-                }
+            if let scene = w.windowScene ?? preferredWindowScene() {
+                let cs = scene.coordinateSpace.bounds
+                if cs.width > 1, cs.height > 1 { frame = cs }
             }
         }
 
-        w.bounds = CGRect(origin: .zero, size: size)
-        w.center = CGPoint(x: size.width / 2, y: size.height / 2)
+        guard w.frame != frame else { return }
+        w.frame = frame
         w.setNeedsLayout()
         w.layoutIfNeeded()
     }
@@ -206,17 +199,28 @@ enum FangUIBridge {
     }
 }
 
-// MARK: - Full-rect content host (original FangUI card layout)
-/// Uses RootViewController as-is: wide rectangular card, bottom nav, Metal FX.
-/// Close is a floating chip — does not shrink / rotate the menu.
+// MARK: - Full-rect content host
+/// RootViewController 铺满整个不透明窗口；关闭按钮由 RootViewController 自绘，
+/// 面板内所有可点区域都归 FangUI 自己。
 private final class FangUIContentHost: UIViewController {
     private let content = RootViewController()
-    private let closeBtn = UIButton(type: .system)
+    private let onSurfaceChange: (UIColor) -> Void
     private let onRequestPowerOff: () -> Void
+    private var surface: UIColor
 
-    init(onRequestPowerOff: @escaping () -> Void) {
+    init(surface: UIColor,
+         onSurfaceChange: @escaping (UIColor) -> Void,
+         onRequestPowerOff: @escaping () -> Void) {
+        self.surface = surface
+        self.onSurfaceChange = onSurfaceChange
         self.onRequestPowerOff = onRequestPowerOff
         super.init(nibName: nil, bundle: nil)
+        content.onSurfaceColorChange = { [weak self] color in
+            self?.applySurface(color)
+        }
+        content.onRequestClose = { [weak self] in
+            self?.onRequestPowerOff()
+        }
     }
 
     required init?(coder: NSCoder) {
@@ -225,8 +229,8 @@ private final class FangUIContentHost: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .clear
         view.transform = .identity
+        applySurface(surface)
 
         addChild(content)
         content.view.frame = view.bounds
@@ -234,35 +238,25 @@ private final class FangUIContentHost: UIViewController {
         content.view.transform = .identity
         view.addSubview(content.view)
         content.didMove(toParent: self)
-
-        closeBtn.setTitle("关闭", for: .normal)
-        closeBtn.titleLabel?.font = .systemFont(ofSize: 14, weight: .semibold)
-        closeBtn.backgroundColor = UIColor.black.withAlphaComponent(0.45)
-        closeBtn.setTitleColor(.white, for: .normal)
-        closeBtn.layer.cornerRadius = 16
-        closeBtn.contentEdgeInsets = UIEdgeInsets(top: 6, left: 14, bottom: 6, right: 14)
-        closeBtn.addTarget(self, action: #selector(onClose), for: .touchUpInside)
-        view.addSubview(closeBtn)
     }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         content.view.frame = view.bounds
-        closeBtn.sizeToFit()
-        let top = view.safeAreaInsets.top + 8
-        closeBtn.frame = CGRect(
-            x: view.bounds.width - closeBtn.bounds.width - 16,
-            y: top,
-            width: closeBtn.bounds.width,
-            height: max(32, closeBtn.bounds.height)
-        )
+    }
+
+    /// 窗口层与宿主层一起换底色，杜绝"面板某块透明、露出桌面"的画面。
+    private func applySurface(_ color: UIColor) {
+        surface = color
+        view.backgroundColor = color
+        view.isOpaque = true
+        onSurfaceChange(color)
+        if #available(iOS 13.0, *) {
+            view.window?.backgroundColor = color
+        }
     }
 
     override var supportedInterfaceOrientations: UIInterfaceOrientationMask { .all }
 
     override var prefersHomeIndicatorAutoHidden: Bool { true }
-
-    @objc private func onClose() {
-        onRequestPowerOff()
-    }
 }

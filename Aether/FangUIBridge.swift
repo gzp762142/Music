@@ -1,8 +1,9 @@
 import UIKit
 
 // MARK: - Pass-through overlay window
-/// System-level window (ObjC FangUISystemWindow: _isSystemWindow / _isSecure).
-/// Empty areas pass through to the app/game underneath.
+/// System window (ObjC FangUISystemWindow). Kept PORTRAIT-shaped; orientation is
+/// handled by counter-rotating content (TrollEngine SHRootCtrl pattern), because
+/// SpringBoard hosts the layer in portrait space and rotates it itself.
 final class FangUIOverlayWindow: FangUISystemWindow {
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         let v = super.hitTest(point, with: event)
@@ -44,36 +45,38 @@ enum FangUIBridge {
 
     private static func show() {
         installLifecycleObserversIfNeeded()
+        startOrientationObserver()
 
         if let w = window {
-            applySceneGeometry(w)
             reassert(w)
             registerWithSpringBoard(w)
             startKeepAlive()
             return
         }
 
-        let w = FangUIOverlayWindow(frame: .zero)
+        // Portrait-shaped frame: matches SpringBoard's hosting space.
+        let w = FangUIOverlayWindow(frame: UIScreen.main.bounds)
         w.windowLevel = levelSystem
         w.backgroundColor = .clear
         w.isOpaque = false
-        w.rootViewController = FangUIContentHost(onRequestPowerOff: { onPowerOff?(false) })
+        w.transform = .identity
+        let host = FangUIContentHost(onRequestPowerOff: { onPowerOff?(false) })
+        w.rootViewController = host
 
         if #available(iOS 13.0, *) {
             if let scene = preferredWindowScene() {
                 w.windowScene = scene
             }
         }
-        // Portrait bounds + landscape SpringBoard = 90° rotated text. Always
-        // rebuild frame from interface orientation, keep transform identity.
-        applySceneGeometry(w)
+        w.frame = UIScreen.main.bounds
+        w.transform = .identity
 
         w.isHidden = false
         w.alpha = 1
         w.makeKeyAndVisible()
-        applySceneGeometry(w)
 
-        // Force context into CA so _contextId is non-zero, then register.
+        host.applyOrientation(FangUIBridge.currentOrientation(), animated: false)
+
         CATransaction.flush()
         DispatchQueue.main.async {
             registerWithSpringBoard(w)
@@ -86,6 +89,7 @@ enum FangUIBridge {
     private static func hide() {
         keepAlive?.invalidate()
         keepAlive = nil
+        FangUIOrientationBridge.stopObserving()
         guard let w = window else { return }
         window = nil
         w.isHidden = true
@@ -97,12 +101,44 @@ enum FangUIBridge {
         }
     }
 
-    /// Cross-app key: SBSAccessibilityWindowHostingController
-    /// registerWindowWithContextID:atLevel:
+    // MARK: Orientation
+
+    /// UIInterfaceOrientation from SpringBoard if possible, else scene/device.
+    static func currentOrientation() -> UIInterfaceOrientation {
+        let raw = FangUIOrientationBridge.activeOrientation()
+        if let o = UIInterfaceOrientation(rawValue: raw), o != .unknown {
+            return o
+        }
+        if #available(iOS 13.0, *) {
+            if let scene = preferredWindowScene() {
+                let o = scene.interfaceOrientation
+                if o != .unknown { return o }
+            }
+        }
+        let device = UIDevice.current.orientation
+        switch device {
+        case .landscapeLeft: return .landscapeRight
+        case .landscapeRight: return .landscapeLeft
+        case .portraitUpsideDown: return .portraitUpsideDown
+        default: return .portrait
+        }
+    }
+
+    private static func startOrientationObserver() {
+        FangUIOrientationBridge.startObserving { orientationRaw, duration in
+            guard let w = window, let host = w.rootViewController as? FangUIContentHost else { return }
+            let o = UIInterfaceOrientation(rawValue: orientationRaw) ?? .portrait
+            host.applyOrientation(o, animated: true, duration: duration)
+            // Re-register so SpringBoard picks up the refreshed context.
+            registerWithSpringBoard(w)
+        }
+    }
+
+    // MARK: SpringBoard registration
+
     private static func registerWithSpringBoard(_ w: UIWindow) {
         let ok = FangUISBSHosting.shared().register(w, atLevel: Double(w.windowLevel.rawValue))
         if !ok {
-            // Retry once after the window is fully in the hierarchy.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                 _ = FangUISBSHosting.shared().register(w, atLevel: Double(w.windowLevel.rawValue))
             }
@@ -112,59 +148,32 @@ enum FangUIBridge {
     private static func reassert(_ w: UIWindow) {
         let bg = UIApplication.shared.applicationState == .background
             || UIApplication.shared.applicationState == .inactive
-        applySceneGeometry(w)
+        // Keep portrait frame; do not fight SpringBoard with geometry changes.
+        w.transform = .identity
+        if w.frame != UIScreen.main.bounds {
+            w.frame = UIScreen.main.bounds
+        }
         w.isHidden = false
         w.alpha = 1
-        // Keep system level; never drop below statusBar+1000 (SHMainWnd rule).
         if w.windowLevel.rawValue < UIWindow.Level.statusBar.rawValue + 1000 {
             w.windowLevel = levelSystem
         }
+        (w.rootViewController as? FangUIContentHost)?
+            .applyOrientation(currentOrientation(), animated: false)
+
         if bg {
             if w.isKeyWindow { w.resignKey() }
-            // Re-register at current level so SpringBoard keeps compositing.
             registerWithSpringBoard(w)
         } else if !w.isKeyWindow {
             w.makeKeyAndVisible()
         }
     }
 
-    /// Rebuild window frame so content is upright on iPad (landscape SpringBoard
-    /// + portrait UIScreen.main.bounds is what rotated the menu 90°).
-    private static func applySceneGeometry(_ w: UIWindow) {
-        w.transform = .identity
-
-        var size = UIScreen.main.bounds.size
-
-        if #available(iOS 13.0, *) {
-            let scene = w.windowScene ?? preferredWindowScene()
-            if let scene = scene {
-                let screen = UIScreen.main.bounds.size
-                let longSide = max(screen.width, screen.height)
-                let shortSide = min(screen.width, screen.height)
-                switch scene.interfaceOrientation {
-                case .landscapeLeft, .landscapeRight:
-                    size = CGSize(width: longSide, height: shortSide)
-                case .portrait, .portraitUpsideDown:
-                    size = CGSize(width: shortSide, height: longSide)
-                default:
-                    // Fall back to scene coordinate space
-                    let cs = scene.coordinateSpace.bounds.size
-                    if cs.width > 0 && cs.height > 0 { size = cs }
-                }
-            }
-        }
-
-        w.bounds = CGRect(origin: .zero, size: size)
-        w.center = CGPoint(x: size.width / 2, y: size.height / 2)
-        w.setNeedsLayout()
-        w.layoutIfNeeded()
-    }
-
     // MARK: Keep-alive
 
     private static func startKeepAlive() {
         keepAlive?.invalidate()
-        keepAlive = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { _ in
+        keepAlive = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
             guard let w = window else {
                 keepAlive?.invalidate()
                 keepAlive = nil
@@ -172,9 +181,6 @@ enum FangUIBridge {
             }
             if w.isHidden || w.windowLevel.rawValue < UIWindow.Level.statusBar.rawValue + 1000 {
                 reassert(w)
-            } else {
-                // Orientation can flip while menu is up (iPad rotate).
-                applySceneGeometry(w)
             }
         }
         RunLoop.main.add(keepAlive!, forMode: .common)
@@ -206,13 +212,12 @@ enum FangUIBridge {
     }
 }
 
-// MARK: - Full-rect content host (original FangUI card layout)
-/// Uses RootViewController as-is: wide rectangular card, bottom nav, Metal FX.
-/// Close is a floating chip — does not shrink / rotate the menu.
+// MARK: - Content host with orientation compensation
 private final class FangUIContentHost: UIViewController {
     private let content = RootViewController()
     private let closeBtn = UIButton(type: .system)
     private let onRequestPowerOff: () -> Void
+    private var currentOrientation: UIInterfaceOrientation = .portrait
 
     init(onRequestPowerOff: @escaping () -> Void) {
         self.onRequestPowerOff = onRequestPowerOff
@@ -226,12 +231,11 @@ private final class FangUIContentHost: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .clear
-        view.transform = .identity
+        view.clipsToBounds = false
 
         addChild(content)
         content.view.frame = view.bounds
-        content.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        content.view.transform = .identity
+        content.view.autoresizingMask = []
         view.addSubview(content.view)
         content.didMove(toParent: self)
 
@@ -245,21 +249,72 @@ private final class FangUIContentHost: UIViewController {
         view.addSubview(closeBtn)
     }
 
-    override func viewDidLayoutSubviews() {
-        super.viewDidLayoutSubviews()
-        content.view.frame = view.bounds
+    // MARK: Orientation (TrollEngine SHRootCtrl pattern)
+
+    private static func rotationTransform(for o: UIInterfaceOrientation) -> CGAffineTransform {
+        switch o {
+        case .portraitUpsideDown: return CGAffineTransform(rotationAngle: .pi)
+        case .landscapeLeft:      return CGAffineTransform(rotationAngle: -.pi / 2)
+        case .landscapeRight:     return CGAffineTransform(rotationAngle: .pi / 2)
+        default:                  return .identity
+        }
+    }
+
+    func applyOrientation(_ orientation: UIInterfaceOrientation,
+                          animated: Bool,
+                          duration: TimeInterval = 0.25) {
+        let screen = UIScreen.main.bounds.size
+        let insets = view.safeAreaInsets
+        let safeW = screen.width - insets.left - insets.right
+        let safeH = screen.height - insets.top - insets.bottom
+
+        let isLandscape = orientation == .landscapeLeft || orientation == .landscapeRight
+        let w = isLandscape ? max(safeW, safeH) : min(safeW, safeH)
+        let h = isLandscape ? min(safeW, safeH) : max(safeW, safeH)
+        let bounds = CGRect(x: 0, y: 0, width: w, height: h)
+
+        let t = FangUIContentHost.rotationTransform(for: orientation)
+        let inv = t.inverted()
+
+        let apply = {
+            // Outer: rotate to cancel SpringBoard's own rotation.
+            self.view.transform = t
+            self.view.bounds = bounds
+            // Inner: counter-rotate so the menu reads upright, laid out landscape.
+            self.content.view.transform = inv
+            self.content.view.bounds = bounds
+            self.content.view.center = CGPoint(x: bounds.midX, y: bounds.midY)
+            self.layoutCloseButton(in: bounds)
+            self.view.setNeedsLayout()
+            self.view.layoutIfNeeded()
+        }
+
+        currentOrientation = orientation
+
+        if animated && duration > 0 {
+            UIView.animate(withDuration: duration, animations: apply)
+        } else {
+            apply()
+        }
+    }
+
+    private func layoutCloseButton(in bounds: CGRect) {
         closeBtn.sizeToFit()
-        let top = view.safeAreaInsets.top + 8
         closeBtn.frame = CGRect(
-            x: view.bounds.width - closeBtn.bounds.width - 16,
-            y: top,
+            x: bounds.width - closeBtn.bounds.width - 16,
+            y: 16,
             width: closeBtn.bounds.width,
             height: max(32, closeBtn.bounds.height)
         )
     }
 
-    override var supportedInterfaceOrientations: UIInterfaceOrientationMask { .all }
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        layoutCloseButton(in: view.bounds)
+    }
 
+    override var supportedInterfaceOrientations: UIInterfaceOrientationMask { .portrait }
+    override var shouldAutorotate: Bool { false }
     override var prefersHomeIndicatorAutoHidden: Bool { true }
 
     @objc private func onClose() {

@@ -27,6 +27,9 @@ enum FangUIBridge {
     /// 存 center 而不是 frame —— 窗口带方向变换时 frame 是包围盒，不可靠。
     private static var customCenter: CGPoint?
 
+    /// 已向 SpringBoard 注册过的窗口：同一个窗口只注册一次。
+    private static weak var registeredContextWindow: UIWindow?
+
     /// 拖动把手回调：把面板搬到新位置并记住。
     static func setPanelCenter(_ center: CGPoint) {
         customCenter = center
@@ -58,50 +61,49 @@ enum FangUIBridge {
         installLifecycleObserversIfNeeded()
         startOrientationObserver()
 
-        if let w = window {
-            // 复用同一窗口：面板视图必须还在，否则重建，避免残留一份。
-            if panel == nil || panel?.view.superview == nil {
-                attachPanel(to: w)
-            }
-            applySceneGeometry(w)
-            reassert(w)
-            registerWithSpringBoard(w)
-            startKeepAlive()
-            return
+        // 窗口是**长期单例**：创建一次、注册一次、永不销毁。
+        // 每次开关都新建窗口的话，旧窗口的 SpringBoard 托管层不会被注销，
+        // 屏幕上就会叠加出好几份面板（实测重影的来源）。
+        let w: FangUIOverlayWindow
+        if let existing = window {
+            w = existing
+        } else {
+            w = makeWindow()
+            window = w
         }
 
+        if panel == nil || panel?.view.superview !== w {
+            attachPanel(to: w)
+        }
+        applySceneGeometry(w)
+        w.isHidden = false
+        w.alpha = 1
+        if !w.isKeyWindow { w.makeKeyAndVisible() }
+        applySceneGeometry(w)
+        startKeepAlive()
+    }
+
+    private static func makeWindow() -> FangUIOverlayWindow {
         let w = FangUIOverlayWindow(frame: .zero)
         w.windowLevel = levelSystem
         // 窗口只覆盖卡片本身（含阴影边距）：卡片不透明，
         // 卡片之外透出桌面或下层 app —— 这才是外挂悬浮菜单的形态。
         w.backgroundColor = .clear
         w.isOpaque = false
-
         // 宿主 VC 只管窗口状态；面板视图直接挂在窗口上，
         // 绕开 UIKit 对 rootViewController.view 的方向旋转。
         w.rootViewController = FangUIContentHost()
-
         if #available(iOS 13.0, *) {
             if let scene = preferredWindowScene() {
                 w.windowScene = scene
             }
         }
-        attachPanel(to: w)
-        applySceneGeometry(w)
-
+        // Force context into CA so _contextId is non-zero, then register once.
         w.isHidden = false
-        w.alpha = 1
         w.makeKeyAndVisible()
-        applySceneGeometry(w)
-
-        // Force context into CA so _contextId is non-zero, then register.
         CATransaction.flush()
-        DispatchQueue.main.async {
-            registerWithSpringBoard(w)
-        }
-
-        window = w
-        startKeepAlive()
+        registerWithSpringBoard(w)
+        return w
     }
 
     /// 保证窗口里只有一份面板视图。
@@ -121,14 +123,13 @@ enum FangUIBridge {
         keepAlive?.invalidate()
         keepAlive = nil
         FangUIOrientationBridge.stopObserving()
-        // 先无条件清状态：窗口为 nil 时也不该留下面板引用/拖动位置。
+        // 收起时只摘掉面板视图并隐藏窗口；窗口与它的托管上下文留着复用。
         panel?.view.removeFromSuperview()
         panel = nil
         customCenter = nil
         guard let w = window else { return }
-        window = nil
         w.isHidden = true
-        w.rootViewController = nil
+        w.alpha = 0
         if w.isKeyWindow {
             if let appWin = UIApplication.shared.windows.first(where: { $0 !== w && !$0.isHidden }) {
                 appWin.makeKey()
@@ -138,12 +139,21 @@ enum FangUIBridge {
 
     /// Cross-app key: SBSAccessibilityWindowHostingController
     /// registerWindowWithContextID:atLevel:
+    ///
+    /// 只对一个窗口的 contextID 注册一次：同一个窗口重复调用没有意义，
+    /// 反而给 SpringBoard 制造重复托管的机会。
     private static func registerWithSpringBoard(_ w: UIWindow) {
+        if registeredContextWindow === w { return }
         let ok = FangUISBSHosting.shared().register(w, atLevel: Double(w.windowLevel.rawValue))
-        if !ok {
-            // Retry once after the window is fully in the hierarchy.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                _ = FangUISBSHosting.shared().register(w, atLevel: Double(w.windowLevel.rawValue))
+        if ok {
+            registeredContextWindow = w
+            return
+        }
+        // Retry once after the window is fully in the hierarchy.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            guard registeredContextWindow !== w else { return }
+            if FangUISBSHosting.shared().register(w, atLevel: Double(w.windowLevel.rawValue)) {
+                registeredContextWindow = w
             }
         }
     }
@@ -160,7 +170,7 @@ enum FangUIBridge {
         }
         if bg {
             if w.isKeyWindow { w.resignKey() }
-            // Re-register at current level so SpringBoard keeps compositing.
+            // 注册已在窗口创建时完成；这里只在丢失后补一次。
             registerWithSpringBoard(w)
         } else if !w.isKeyWindow {
             w.makeKeyAndVisible()

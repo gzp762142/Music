@@ -1,14 +1,15 @@
 import UIKit
 
-/// Shows / hides FangUI (UIKit + Metal) over the Music shell.
-/// Power ON → overlay appears; Power OFF → auto dismiss.
+/// FangUI as a standalone high-level UIWindow (not a subview of the app window).
+/// With Music platform entitlements it can stay visible over other apps
+/// (game overlay style). Volume keys / power only toggle this window.
 enum FangUIBridge {
-    private static var host: FangUIHost?
+    private static var window: UIWindow?
     private static var onPowerOff: ((Bool) -> Void)?
 
     static var isVisible: Bool {
-        guard let h = host else { return false }
-        return h.view.superview != nil && h.view.alpha > 0.01
+        guard let w = window else { return false }
+        return !w.isHidden && w.alpha > 0.01
     }
 
     static func setPowerCallback(_ cb: @escaping (Bool) -> Void) {
@@ -21,59 +22,79 @@ enum FangUIBridge {
         }
     }
 
-    private static func keyWindow() -> UIWindow? {
-        if #available(iOS 13.0, *) {
-            let scenes = UIApplication.shared.connectedScenes
-                .compactMap { $0 as? UIWindowScene }
-            for scene in scenes {
-                if let w = scene.windows.first(where: { $0.isKeyWindow }) { return w }
-                if let w = scene.windows.first { return w }
-            }
-        }
-        return UIApplication.shared.windows.first { $0.isKeyWindow }
-            ?? UIApplication.shared.windows.first
-    }
-
     private static func show() {
-        guard let window = keyWindow() else { return }
-
-        // Existing host but detached (e.g. window recreate) → re-attach.
-        if let h = host {
-            if h.view.superview !== window {
-                window.addSubview(h.view)
+        if let w = window {
+            // Already exists → just unhide / raise.
+            w.isHidden = false
+            w.alpha = 1
+            // Keep it above status bar; raise further if something took the level.
+            if w.windowLevel <= .statusBar {
+                w.windowLevel = UIWindow.Level.statusBar + 1
             }
-            h.view.frame = window.bounds
-            window.bringSubviewToFront(h.view)
-            UIView.animate(withDuration: 0.15) { h.view.alpha = 1 }
+            // Do not steal key from the game forever; only become key briefly
+            // so the first responder chain works when menu opens.
+            w.makeKeyAndVisible()
             return
         }
 
-        let h = FangUIHost()
-        h.onRequestPowerOff = { onPowerOff?(false) }
-        h.view.frame = window.bounds
-        h.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        window.addSubview(h.view)
-        h.view.alpha = 0
-        UIView.animate(withDuration: 0.28) { h.view.alpha = 1 }
-        host = h
+        let w = UIWindow(frame: UIScreen.main.bounds)
+        w.windowLevel = UIWindow.Level.statusBar + 1
+        w.backgroundColor = .clear
+        w.isOpaque = false
+        w.rootViewController = FangUIHost(onRequestPowerOff: { onPowerOff?(false) })
+        // No autoresizing on window itself; scene/rotation handled in host.
+        if #available(iOS 13.0, *) {
+            if let scene = preferredWindowScene() {
+                w.windowScene = scene
+                w.frame = scene.coordinateSpace.bounds
+            }
+        }
+        w.isHidden = false
+        w.alpha = 1
+        w.makeKeyAndVisible()
+        window = w
     }
 
     private static func hide() {
-        guard let h = host else { return }
-        host = nil
-        UIView.animate(withDuration: 0.22, animations: {
-            h.view.alpha = 0
-        }, completion: { _ in
-            h.view.removeFromSuperview()
-        })
+        guard let w = window else { return }
+        window = nil
+        w.isHidden = true
+        w.rootViewController = nil
+        // Resign key so the game / shell can take it back.
+        if w.isKeyWindow {
+            // Prefer the app's original window as key again.
+            if let appWin = UIApplication.shared.windows.first(where: { $0 !== w && !$0.isHidden }) {
+                appWin.makeKey()
+            } else {
+                w.resignKey()
+            }
+        }
+    }
+
+    private static func preferredWindowScene() -> UIWindowScene? {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        // Prefer foreground active, else any.
+        if let fg = scenes.first(where: { $0.activationState == .foregroundActive }) {
+            return fg
+        }
+        return scenes.first
     }
 }
 
-/// Thin container that owns RootViewController and a floating close button.
+/// Full-screen host: Metal/UIKit menu + floating close.
 private final class FangUIHost: UIViewController {
-    var onRequestPowerOff: (() -> Void)?
     private let content = RootViewController()
     private let closeBtn = UIButton(type: .system)
+    private let onRequestPowerOff: () -> Void
+
+    init(onRequestPowerOff: @escaping () -> Void) {
+        self.onRequestPowerOff = onRequestPowerOff
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -108,7 +129,9 @@ private final class FangUIHost: UIViewController {
         )
     }
 
+    override var prefersHomeIndicatorAutoHidden: Bool { true }
+
     @objc private func onClose() {
-        onRequestPowerOff?()
+        onRequestPowerOff()
     }
 }

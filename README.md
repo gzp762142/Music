@@ -9,14 +9,13 @@ iOS 壳子（加载 → 卡密 → 控制台），身份皮对齐 Apple Music。
 
 ## FangUI 接入
 
-- 源码：`Aether/FangUI/`（UIKit 菜单 + Metal 特效，来自 `ui_uikit_metal`）
-- **卡密通过后默认关闭**，不自动弹出菜单
-- **开启** 电源 → 全屏弹出 FangUI
-- **关闭** 电源 / 右上角「关闭」→ 自动收起
-- **音量+** → 弹出菜单；**音量-** → 隐藏菜单（电源状态不变，可在游戏里藏菜单）
-- 已是开启再点「开启」→ 若菜单意外丢失会重新拉起
-- 回前台时启动音量监听；解锁/加载阶段停监听并收菜单
-- 重命名 `AppState` → `FangUIState`，避免与壳子状态冲突
+- 源码：`Aether/FangUI/`（UIKit 菜单 + Metal 特效）
+- **独立 `UIWindow`**，`windowLevel = statusBar + 1`，不是 keyWindow 上的 subview
+- 依赖 Music 身份证（platform / no-sandbox / springboard window-hosting）尽量悬浮在其他 App 之上
+- **卡密通过后默认关闭**
+- **开启** 电源 → 创建并显示悬浮窗；**关闭** → hidden 并释放
+- **音量+** → 显示；**音量-** → 隐藏（电源状态可不变）
+- 右上角「关闭」= 关电源并收起
 
 ## 本地生成工程
 
